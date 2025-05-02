@@ -1,10 +1,10 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import LoadingSpinner from "../components/LoadingSpinner";
 
-// Types for API responses - modified to handle null values
+// ===== Types =====
 interface ProcessedBet {
   id: number;
   event_name: string;
@@ -57,8 +57,13 @@ interface StatItem {
   avgEV: number;
 }
 
+interface DateRange {
+  start: string;
+  end: string;
+}
+
 export default function EVAnalysisPage() {
-  // State variables
+  // ===== State variables =====
   const [filteredBets, setFilteredBets] = useState<ProcessedBet[]>([]);
   const [startDate, setStartDate] = useState<string>('');
   const [endDate, setEndDate] = useState<string>('');
@@ -72,14 +77,53 @@ export default function EVAnalysisPage() {
   const [error, setError] = useState<string | null>(null);
   const [dateError, setDateError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
-const [pageSize, setPageSize] = useState<number>(15);
-const [sortColumn, setSortColumn] = useState<string>("event_start_date");
-const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-const [dateFilterType, setDateFilterType] = useState<string>("custom");
+  const [pageSize, setPageSize] = useState<number>(15);
+  const [sortColumn, setSortColumn] = useState<string>("event_start_date");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  const [dateFilterType, setDateFilterType] = useState<string>("custom");
 
+  // ===== Helper Functions =====
+  
+  // Format date for input field (YYYY-MM-DD)
+  const formatDateForInput = (date: Date): string => {
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const day = String(date.getDate()).padStart(2, '0');
+    return `${year}-${month}-${day}`;
+  };
 
-  // Fetch data function
-  const fetchEVAnalysisData = async () => {
+  // Format money values
+  const formatMoney = (amount: number | null | undefined) => {
+    if (amount === null || amount === undefined) {
+      return "$0.00";
+    }
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2
+    }).format(amount);
+  };
+
+  // Format percentage values
+  const formatPercent = (value: number | null | undefined) => {
+    if (value === null || value === undefined) {
+      return "0.00%";
+    }
+    return `${value.toFixed(2)}%`;
+  };
+
+  // Get color class based on value
+  const getColorClass = (value: number | null | undefined, threshold: number = 0): string => {
+    if (value === null || value === undefined) return "text-gray-400";
+    if (value > threshold) return "text-green-600";
+    if (value < threshold) return "text-red-600";
+    return "text-yellow-500";
+  };
+
+  // ===== Data Fetching =====
+  
+  // Fetch data function - memoized with useCallback to avoid recreation on each render
+  const fetchEVAnalysisData = useCallback(async () => {
     setIsLoading(true);
     setError(null);
 
@@ -202,29 +246,12 @@ const [dateFilterType, setDateFilterType] = useState<string>("custom");
       setError(`Error fetching data: ${err instanceof Error ? err.message : String(err)}`);
       setIsLoading(false);
     }
-  };
+  }, [startDate, endDate, includePendingBets, includePlayerProps]);
 
-  // Format date for input field (YYYY-MM-DD)
-  const formatDateForInput = (date: Date): string => {
-    const year = date.getFullYear();
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const day = String(date.getDate()).padStart(2, '0');
-    return `${year}-${month}-${day}`;
-  };
-
-  // Handle date changes without full page refresh
-  const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newDate = e.target.value;
-    setStartDate(newDate);
-  };
-
-  const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newDate = e.target.value;
-    setEndDate(newDate);
-  };
-
+  // ===== Date Range Handling =====
+  
   // Preset date range options
-const getPresetDateRange = (type: string): { start: string; end: string } => {
+  const getPresetDateRange = (type: string): DateRange => {
     const today = new Date();
     const todayStr = formatDateForInput(today);
     
@@ -284,22 +311,128 @@ const getPresetDateRange = (type: string): { start: string; end: string } => {
         return { start: startDate, end: endDate };
     }
   };
+
+  // Handle date changes without full page refresh
+  const handleStartDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newDate = e.target.value;
+    setStartDate(newDate);
+  };
+
+  const handleEndDateChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newDate = e.target.value;
+    setEndDate(newDate);
+  };
   
-  // Handle date preset change
+  // Handle date preset change with immediate data fetch
   const handleDatePresetChange = (type: string) => {
-    setDateFilterType(type);
-    const { start, end } = getPresetDateRange(type);
-    setStartDate(start);
-    setEndDate(end);
+    // Only proceed if this is a new selection
+    if (type === dateFilterType && type !== "custom") return;
     
-    // If not custom, apply filters immediately
+    // Get date range for selected preset
+    const dateRange = getPresetDateRange(type);
+    
+    // Update state values
+    setDateFilterType(type);
+    setStartDate(dateRange.start);
+    setEndDate(dateRange.end);
+    
+    // For non-custom presets, fetch data immediately
     if (type !== "custom") {
-      setTimeout(() => applyDateFilters(), 0);
+      // We need to construct and pass the parameters directly rather than relying on state
+      // since state updates won't be reflected immediately
+      const params = new URLSearchParams();
+      if (includePendingBets) params.append('include_pending', 'true');
+      if (includePlayerProps) params.append('include_player_props', 'true');
+      if (dateRange.start) params.append('start_date', dateRange.start);
+      if (dateRange.end) params.append('end_date', dateRange.end);
+      
+      setIsLoading(true);
+      axios.get(`http://localhost:5007/api/ev-analysis?${params.toString()}`)
+        .then(response => {
+          // Process response data (using the same logic as fetchEVAnalysisData)
+          if (!response.data) {
+            setError("Invalid API response");
+            setIsLoading(false);
+            return;
+          }
+
+          const { bets, stats, sportsbook_stats, sport_stats, ev_quality_stats } = response.data;
+          
+          // Process and set all the data
+          setFilteredBets(bets || []);
+          
+          if (stats) {
+            setStats({
+              total_bets: stats.total_bets || 0,
+              winning_bets: stats.winning_bets || 0,
+              losing_bets: stats.losing_bets || 0,
+              pending_bets: stats.pending_bets || 0,
+              total_stake: stats.total_stake || 0,
+              total_profit: stats.total_profit || 0,
+              expected_profit: stats.expected_profit || 0,
+              roi: stats.roi || 0,
+              expected_roi: stats.expected_roi || 0,
+              win_rate: stats.win_rate || 0,
+              clv_win_rate: stats.clv_win_rate || 0,
+              avg_ev: stats.avg_ev || 0,
+              valid_clv_bets: stats.valid_clv_bets || 0,
+              total_analyzed_bets: stats.total_analyzed_bets || 0
+            });
+          }
+          
+          // Process sportsbook stats
+          const formattedSportsbookStats = (sportsbook_stats || []).map((sb: any) => ({
+            name: sb.name || "",
+            betCount: sb.bet_count || 0,
+            totalStake: sb.total_stake || 0,
+            totalProfit: sb.total_profit || 0,
+            expectedProfit: sb.expected_profit || 0,
+            roi: sb.roi || 0,
+            expectedRoi: sb.expected_roi || 0,
+            avgEV: sb.avg_ev || 0
+          }));
+          setSportsbookStats(formattedSportsbookStats);
+          
+          // Process sport stats
+          const formattedSportStats = (sport_stats || []).map((sport: any) => ({
+            name: sport.name || "",
+            betCount: sport.bet_count || 0,
+            totalStake: sport.total_stake || 0,
+            totalProfit: sport.total_profit || 0,
+            expectedProfit: sport.expected_profit || 0,
+            roi: sport.roi || 0,
+            expectedRoi: sport.expected_roi || 0,
+            avgEV: sport.avg_ev || 0
+          }));
+          setSportStats(formattedSportStats);
+          
+          // Process EV quality stats
+          const formattedEVQualityStats = (ev_quality_stats || []).map((ev: any) => ({
+            name: ev.category || "",
+            betCount: ev.bet_count || 0,
+            totalStake: ev.total_stake || 0,
+            totalProfit: ev.total_profit || 0,
+            expectedProfit: ev.expected_profit || 0,
+            roi: ev.roi || 0,
+            expectedRoi: ev.expected_roi || 0,
+            avgEV: ev.avg_ev || 0
+          }));
+          setEVQualityStats(formattedEVQualityStats);
+          
+          setIsLoading(false);
+        })
+        .catch(err => {
+          console.error("Error fetching EV analysis data:", err);
+          setError(`Error fetching data: ${err instanceof Error ? err.message : String(err)}`);
+          setIsLoading(false);
+        });
     }
   };
 
-  // Add this sorting function
-const sortBets = (bets: ProcessedBet[]): ProcessedBet[] => {
+  // ===== Sorting =====
+  
+  // Sort bets based on current sort column and direction
+  const sortBets = (bets: ProcessedBet[]): ProcessedBet[] => {
     return [...bets].sort((a, b) => {
       // Handle different column types
       if (sortColumn === "event_start_date") {
@@ -326,7 +459,7 @@ const sortBets = (bets: ProcessedBet[]): ProcessedBet[] => {
   };
 
   // Handle column header click for sorting
-const handleSort = (column: string) => {
+  const handleSort = (column: string) => {
     if (sortColumn === column) {
       // Toggle direction if clicking the same column
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
@@ -337,50 +470,30 @@ const handleSort = (column: string) => {
     }
   };
 
-  // Initial data fetch
+  // ===== Effects =====
+  
+  // Initial data fetch only
   useEffect(() => {
     fetchEVAnalysisData();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Empty dependency array to run only once on mount
 
-  // Refetch when filters change
+  // Refetch when checkbox filters change
   useEffect(() => {
     // Don't fetch on initial mount, that's handled by the previous useEffect
     if (isLoading) return;
 
+    // Only fetch when these specific filters change
     fetchEVAnalysisData();
   }, [includePendingBets, includePlayerProps]);
 
-  // Manual apply button to trigger date filter changes
+  // Manual apply button to trigger date filter changes for custom date range
   const applyDateFilters = () => {
     fetchEVAnalysisData();
   };
 
-  // Format helpers
-  const formatMoney = (amount: number | null | undefined) => {
-    if (amount === null || amount === undefined) {
-      return "$0.00";
-    }
-    return new Intl.NumberFormat('en-US', {
-      style: 'currency',
-      currency: 'USD',
-      minimumFractionDigits: 2
-    }).format(amount);
-  };
-
-  const formatPercent = (value: number | null | undefined) => {
-    if (value === null || value === undefined) {
-      return "0.00%";
-    }
-    return `${value.toFixed(2)}%`;
-  };
-
-  const getColorClass = (value: number | null | undefined, threshold: number = 0): string => {
-    if (value === null || value === undefined) return "text-gray-400";
-    if (value > threshold) return "text-green-600";
-    if (value < threshold) return "text-red-600";
-    return "text-yellow-500";
-  };
-
+  // ===== Render Logic =====
+  
   // Loading state
   if (isLoading) {
     return <LoadingSpinner size="large" message="Loading EV analysis data..." />;
@@ -439,151 +552,121 @@ const handleSort = (column: string) => {
           <CardDescription>Adjust filters to refine your EV analysis</CardDescription>
         </CardHeader>
         <CardContent>
-          {/* <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-              <input
-                type="date"
-                value={startDate}
-                onChange={handleStartDateChange}
-                className="w-full p-2 border border-gray-300 rounded"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-              <input
-                type="date"
-                value={endDate}
-                onChange={handleEndDateChange}
-                className="w-full p-2 border border-gray-300 rounded"
-              />
-            </div>
-          </div>
-          
-          {/* Date filter apply button */}
-          {/* <div className="mb-4">
-            <button 
-              onClick={applyDateFilters}
-              className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-            >
-              Apply Date Filters
-            </button>
-          </div> */}
           <div className="mb-6">
-  <h3 className="text-sm font-medium text-gray-700 mb-2">Date Range</h3>
-  
-  <div className="flex flex-wrap gap-2 mb-4">
-    <button
-      onClick={() => handleDatePresetChange("all")}
-      className={`px-3 py-1 text-sm rounded-md ${
-        dateFilterType === "all" 
-          ? "bg-blue-600 text-white" 
-          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-      }`}
-    >
-      All Time
-    </button>
-    
-    <button
-      onClick={() => handleDatePresetChange("ytd")}
-      className={`px-3 py-1 text-sm rounded-md ${
-        dateFilterType === "ytd" 
-          ? "bg-blue-600 text-white" 
-          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-      }`}
-    >
-      Year to Date
-    </button>
-    
-    <button
-      onClick={() => handleDatePresetChange("month")}
-      className={`px-3 py-1 text-sm rounded-md ${
-        dateFilterType === "month" 
-          ? "bg-blue-600 text-white" 
-          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-      }`}
-    >
-      Last 30 Days
-    </button>
-    
-    <button
-      onClick={() => handleDatePresetChange("week")}
-      className={`px-3 py-1 text-sm rounded-md ${
-        dateFilterType === "week" 
-          ? "bg-blue-600 text-white" 
-          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-      }`}
-    >
-      Last 7 Days
-    </button>
-    
-    <button
-      onClick={() => handleDatePresetChange("yesterday")}
-      className={`px-3 py-1 text-sm rounded-md ${
-        dateFilterType === "yesterday" 
-          ? "bg-blue-600 text-white" 
-          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-      }`}
-    >
-      Yesterday
-    </button>
-    
-    <button
-      onClick={() => handleDatePresetChange("today")}
-      className={`px-3 py-1 text-sm rounded-md ${
-        dateFilterType === "today" 
-          ? "bg-blue-600 text-white" 
-          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-      }`}
-    >
-      Today
-    </button>
-    
-    <button
-      onClick={() => handleDatePresetChange("custom")}
-      className={`px-3 py-1 text-sm rounded-md ${
-        dateFilterType === "custom" 
-          ? "bg-blue-600 text-white" 
-          : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-      }`}
-    >
-      Custom
-    </button>
-  </div>
-  
-  {dateFilterType === "custom" && (
-    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
-        <input
-          type="date"
-          value={startDate}
-          onChange={handleStartDateChange}
-          className="w-full p-2 border border-gray-300 rounded"
-        />
-      </div>
-      <div>
-        <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
-        <input
-          type="date"
-          value={endDate}
-          onChange={handleEndDateChange}
-          className="w-full p-2 border border-gray-300 rounded"
-        />
-      </div>
-      
-      {/* Date filter apply button */}
-      <div className="md:col-span-2">
-        <button 
-          onClick={applyDateFilters}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-        >
-          Apply Custom Date Range
-        </button>
-      </div>
-    </div>
-  )}
-</div>
+            <h3 className="text-sm font-medium text-gray-700 mb-2">Date Range</h3>
+            
+            <div className="flex flex-wrap gap-2 mb-4">
+              <button
+                onClick={() => handleDatePresetChange("all")}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  dateFilterType === "all" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                All Time
+              </button>
+              
+              <button
+                onClick={() => handleDatePresetChange("ytd")}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  dateFilterType === "ytd" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                Year to Date
+              </button>
+              
+              <button
+                onClick={() => handleDatePresetChange("month")}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  dateFilterType === "month" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                Last 30 Days
+              </button>
+              
+              <button
+                onClick={() => handleDatePresetChange("week")}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  dateFilterType === "week" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                Last 7 Days
+              </button>
+              
+              <button
+                onClick={() => handleDatePresetChange("yesterday")}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  dateFilterType === "yesterday" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                Yesterday
+              </button>
+              
+              <button
+                onClick={() => handleDatePresetChange("today")}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  dateFilterType === "today" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                Today
+              </button>
+              
+              <button
+                onClick={() => handleDatePresetChange("custom")}
+                className={`px-3 py-1 text-sm rounded-md ${
+                  dateFilterType === "custom" 
+                    ? "bg-blue-600 text-white" 
+                    : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                }`}
+              >
+                Custom
+              </button>
+            </div>
+            
+            {dateFilterType === "custom" && (
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Start Date</label>
+                  <input
+                    type="date"
+                    value={startDate}
+                    onChange={handleStartDateChange}
+                    className="w-full p-2 border border-gray-300 rounded"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">End Date</label>
+                  <input
+                    type="date"
+                    value={endDate}
+                    onChange={handleEndDateChange}
+                    className="w-full p-2 border border-gray-300 rounded"
+                  />
+                </div>
+                
+                {/* Date filter apply button */}
+                <div className="md:col-span-2">
+                  <button 
+                    onClick={applyDateFilters}
+                    className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+                  >
+                    Apply Custom Date Range
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
 
           <div className="flex flex-wrap gap-4">
             <div className="flex items-center">
@@ -836,15 +919,15 @@ const handleSort = (column: string) => {
                         </span>
                       </td>
                       <td>{ev.betCount}</td>
-                      <td className="text-right">{formatMoney(ev.totalStake)}</td>
-                      <td className={`text-right ${getColorClass(ev.totalProfit)}`}>
+                      <td className="text-left">{formatMoney(ev.totalStake)}</td>
+                      <td className={`text-left ${getColorClass(ev.totalProfit)}`}>
                         {formatMoney(ev.totalProfit)}
                       </td>
-                      <td className="text-right">{formatMoney(ev.expectedProfit)}</td>
-                      <td className={`text-right ${getColorClass(ev.roi)}`}>
+                      <td className="text-left">{formatMoney(ev.expectedProfit)}</td>
+                      <td className={`text-left ${getColorClass(ev.roi)}`}>
                         {formatPercent(ev.roi)}
                       </td>
-                      <td className="text-right">{formatPercent(ev.avgEV)}</td>
+                      <td className="text-left">{formatPercent(ev.avgEV)}</td>
                     </tr>
                   ))}
                   {evQualityStats.length === 0 && (
@@ -863,163 +946,163 @@ const handleSort = (column: string) => {
 
       {/* Recent Bets Section */}
       <div>
-  <h2 className="text-xl font-semibold mb-4 text-gray-800">Recent EV Bets</h2>
+        <h2 className="text-xl font-semibold mb-4 text-gray-800">Recent EV Bets</h2>
 
-  <div className="bg-white rounded-lg shadow overflow-hidden">
-    <div className="overflow-x-auto">
-      <table className="data-table">
-        <thead>
-          <tr>
-            <th onClick={() => handleSort("event_name")} className="cursor-pointer">
-              Event {sortColumn === "event_name" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("bet_name")} className="cursor-pointer">
-              Bet {sortColumn === "bet_name" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("sportsbook")} className="cursor-pointer">
-              Sportsbook {sortColumn === "sportsbook" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("odds")} className="cursor-pointer text-left">
-              Odds {sortColumn === "odds" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("clv")} className="cursor-pointer text-left">
-              CLV {sortColumn === "clv" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("ev_percent")} className="cursor-pointer text-left">
-              EV% {sortColumn === "ev_percent" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("stake")} className="cursor-pointer text-left">
-              Stake {sortColumn === "stake" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("bet_profit")} className="cursor-pointer text-left">
-              Profit {sortColumn === "bet_profit" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("status")} className="cursor-pointer text-left">
-              Status {sortColumn === "status" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-            <th onClick={() => handleSort("event_start_date")} className="cursor-pointer text-left">
-              Date {sortColumn === "event_start_date" && (sortDirection === "asc" ? "↑" : "↓")}
-            </th>
-          </tr>
-        </thead>
-        <tbody>
-          {sortBets(filteredBets)
-            .slice((currentPage - 1) * pageSize, currentPage * pageSize)
-            .map((bet) => (
-              <tr key={bet.id}>
-                <td className="max-w-xs truncate text-left" title={bet.event_name}>{bet.event_name}</td>
-                <td className="text-left">{bet.bet_name}</td>
-                <td className="text-left">{bet.sportsbook}</td>
-                <td className="text-left">{bet.odds > 0 ? `+${bet.odds}` : bet.odds}</td>
-                <td className="text-left">{bet.clv !== null ? (bet.clv > 0 ? `+${bet.clv}` : bet.clv) : "N/A"}</td>
-                <td className={`text-left ${bet.ev_percent !== null ? getColorClass(bet.ev_percent * 100) : "text-gray-400"}`}>
-                  {bet.ev_percent !== null ? formatPercent(bet.ev_percent * 100) : "N/A"}
-                </td>
-                <td className="text-left">{formatMoney(bet.stake)}</td>
-                <td className={`text-left ${getColorClass(bet.bet_profit)}`}>
-                  {formatMoney(bet.bet_profit)}
-                </td>
-                <td className="text-left">
-                  <span className={`px-2 py-1 rounded-full text-xs font-medium 
-                    ${bet.status === 'won' ? 'bg-green-100 text-green-800' : 
-                      bet.status === 'lost' ? 'bg-red-100 text-red-800' : 
-                      bet.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 
-                      'bg-gray-100 text-gray-800'}`
-                  }>
-                    {bet.status}
-                  </span>
-                </td>
-                <td className="text-left">{new Date(bet.event_start_date).toLocaleDateString()}</td>
-              </tr>
-            ))}
-          {filteredBets.length === 0 && (
-            <tr>
-              <td colSpan={10} className="p-4 text-center text-gray-500">
-                No bets found matching your filters.
-              </td>
-            </tr>
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th onClick={() => handleSort("event_name")} className="cursor-pointer">
+                    Event {sortColumn === "event_name" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("bet_name")} className="cursor-pointer">
+                    Bet {sortColumn === "bet_name" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("sportsbook")} className="cursor-pointer">
+                    Sportsbook {sortColumn === "sportsbook" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("odds")} className="cursor-pointer text-left">
+                    Odds {sortColumn === "odds" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("clv")} className="cursor-pointer text-left">
+                    CLV {sortColumn === "clv" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("ev_percent")} className="cursor-pointer text-left">
+                    EV% {sortColumn === "ev_percent" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("stake")} className="cursor-pointer text-left">
+                    Stake {sortColumn === "stake" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("bet_profit")} className="cursor-pointer text-left">
+                    Profit {sortColumn === "bet_profit" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("status")} className="cursor-pointer text-left">
+                    Status {sortColumn === "status" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                  <th onClick={() => handleSort("event_start_date")} className="cursor-pointer text-left">
+                    Date {sortColumn === "event_start_date" && (sortDirection === "asc" ? "↑" : "↓")}
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {sortBets(filteredBets)
+                  .slice((currentPage - 1) * pageSize, currentPage * pageSize)
+                  .map((bet) => (
+                    <tr key={bet.id}>
+                      <td className="max-w-xs truncate text-left" title={bet.event_name}>{bet.event_name}</td>
+                      <td className="text-left">{bet.bet_name}</td>
+                      <td className="text-left">{bet.sportsbook}</td>
+                      <td className="text-left">{bet.odds > 0 ? `+${bet.odds}` : bet.odds}</td>
+                      <td className="text-left">{bet.clv !== null ? (bet.clv > 0 ? `+${bet.clv}` : bet.clv) : "N/A"}</td>
+                      <td className={`text-left ${bet.ev_percent !== null ? getColorClass(bet.ev_percent * 100) : "text-gray-400"}`}>
+                        {bet.ev_percent !== null ? formatPercent(bet.ev_percent * 100) : "N/A"}
+                      </td>
+                      <td className="text-left">{formatMoney(bet.stake)}</td>
+                      <td className={`text-left ${getColorClass(bet.bet_profit)}`}>
+                        {formatMoney(bet.bet_profit)}
+                      </td>
+                      <td className="text-left">
+                        <span className={`px-2 py-1 rounded-full text-xs font-medium 
+                          ${bet.status === 'won' ? 'bg-green-100 text-green-800' : 
+                            bet.status === 'lost' ? 'bg-red-100 text-red-800' : 
+                            bet.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 
+                            'bg-gray-100 text-gray-800'}`
+                        }>
+                          {bet.status}
+                        </span>
+                      </td>
+                      <td className="text-left">{new Date(bet.event_start_date).toLocaleDateString()}</td>
+                    </tr>
+                  ))}
+                {filteredBets.length === 0 && (
+                  <tr>
+                    <td colSpan={10} className="p-4 text-center text-gray-500">
+                      No bets found matching your filters.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          
+          {/* Pagination controls */}
+          {filteredBets.length > 0 && (
+            <div className="p-4 border-t border-gray-200 flex items-center justify-between">
+              <div className="flex items-center">
+                <select
+                  value={pageSize}
+                  onChange={(e) => {
+                    setPageSize(Number(e.target.value));
+                    setCurrentPage(1); // Reset to first page when changing page size
+                  }}
+                  className="mr-4 p-2 border border-gray-300 rounded"
+                >
+                  <option value={10}>10 per page</option>
+                  <option value={15}>15 per page</option>
+                  <option value={25}>25 per page</option>
+                  <option value={50}>50 per page</option>
+                </select>
+                <span className="text-sm text-gray-600">
+                  Showing {Math.min((currentPage - 1) * pageSize + 1, filteredBets.length)} to {Math.min(currentPage * pageSize, filteredBets.length)} of {filteredBets.length} bets
+                </span>
+              </div>
+              
+              <div className="flex space-x-2">
+                <button
+                  onClick={() => setCurrentPage(1)}
+                  disabled={currentPage === 1}
+                  className={`px-3 py-1 rounded ${
+                    currentPage === 1
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  }`}
+                >
+                  &laquo;
+                </button>
+                <button
+                  onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                  disabled={currentPage === 1}
+                  className={`px-3 py-1 rounded ${
+                    currentPage === 1
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  }`}
+                >
+                  &lsaquo;
+                </button>
+                
+                <span className="px-3 py-1 rounded bg-blue-600 text-white">
+                  {currentPage}
+                </span>
+                
+                <button
+                  onClick={() => setCurrentPage(Math.min(Math.ceil(filteredBets.length / pageSize), currentPage + 1))}
+                  disabled={currentPage >= Math.ceil(filteredBets.length / pageSize)}
+                  className={`px-3 py-1 rounded ${
+                    currentPage >= Math.ceil(filteredBets.length / pageSize)
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  }`}
+                >
+                  &rsaquo;
+                </button>
+                <button
+                  onClick={() => setCurrentPage(Math.ceil(filteredBets.length / pageSize))}
+                  disabled={currentPage >= Math.ceil(filteredBets.length / pageSize)}
+                  className={`px-3 py-1 rounded ${
+                    currentPage >= Math.ceil(filteredBets.length / pageSize)
+                      ? "bg-gray-200 text-gray-400 cursor-not-allowed"
+                      : "bg-gray-200 text-gray-700 hover:bg-gray-300"
+                  }`}
+                >
+                  &raquo;
+                </button>
+              </div>
+            </div>
           )}
-        </tbody>
-      </table>
-    </div>
-    
-    {/* Pagination controls */}
-    {filteredBets.length > 0 && (
-      <div className="p-4 border-t border-gray-200 flex items-center justify-between">
-        <div className="flex items-center">
-          <select
-            value={pageSize}
-            onChange={(e) => {
-              setPageSize(Number(e.target.value));
-              setCurrentPage(1); // Reset to first page when changing page size
-            }}
-            className="mr-4 p-2 border border-gray-300 rounded"
-          >
-            <option value={10}>10 per page</option>
-            <option value={15}>15 per page</option>
-            <option value={25}>25 per page</option>
-            <option value={50}>50 per page</option>
-          </select>
-          <span className="text-sm text-gray-600">
-            Showing {Math.min((currentPage - 1) * pageSize + 1, filteredBets.length)} to {Math.min(currentPage * pageSize, filteredBets.length)} of {filteredBets.length} bets
-          </span>
-        </div>
-        
-        <div className="flex space-x-2">
-          <button
-            onClick={() => setCurrentPage(1)}
-            disabled={currentPage === 1}
-            className={`px-3 py-1 rounded ${
-              currentPage === 1
-                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-            }`}
-          >
-            &laquo;
-          </button>
-          <button
-            onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
-            disabled={currentPage === 1}
-            className={`px-3 py-1 rounded ${
-              currentPage === 1
-                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-            }`}
-          >
-            &lsaquo;
-          </button>
-          
-          <span className="px-3 py-1 rounded bg-blue-600 text-white">
-            {currentPage}
-          </span>
-          
-          <button
-            onClick={() => setCurrentPage(Math.min(Math.ceil(filteredBets.length / pageSize), currentPage + 1))}
-            disabled={currentPage >= Math.ceil(filteredBets.length / pageSize)}
-            className={`px-3 py-1 rounded ${
-              currentPage >= Math.ceil(filteredBets.length / pageSize)
-                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-            }`}
-          >
-            &rsaquo;
-          </button>
-          <button
-            onClick={() => setCurrentPage(Math.ceil(filteredBets.length / pageSize))}
-            disabled={currentPage >= Math.ceil(filteredBets.length / pageSize)}
-            className={`px-3 py-1 rounded ${
-              currentPage >= Math.ceil(filteredBets.length / pageSize)
-                ? "bg-gray-200 text-gray-400 cursor-not-allowed"
-                : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-            }`}
-          >
-            &raquo;
-          </button>
         </div>
       </div>
-    )}
-  </div>
-</div>
 
       {/* Explanation Section */}
       <Card>
