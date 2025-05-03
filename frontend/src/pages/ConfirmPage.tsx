@@ -1,4 +1,4 @@
-// Modified ConfirmPage.tsx with better error handling
+// pages/ConfirmPage.tsx
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
@@ -24,6 +24,10 @@ export default function ConfirmPage() {
   const [selectedSportsbook, setSelectedSportsbook] = useState<string>("All");
   const [sportsbookOptions, setSportsbookOptions] = useState<string[]>([]);
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
+  
+  // Add sorting state
+  const [sortColumn, setSortColumn] = useState<string>("id");
+  const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
 
   // Fetch unconfirmed settled bets
   useEffect(() => {
@@ -63,10 +67,9 @@ export default function ConfirmPage() {
     fetchBets();
   }, []);
 
-// Updated confirmBet function in ConfirmPage.tsx
-const confirmBet = async (betId: number) => {
+  // Handle bet confirmation
+  const confirmBet = async (betId: number) => {
     try {
-      // Set the proper content type header
       await axios.put(
         `http://localhost:5007/api/bets/${betId}/confirm`,
         {}, // Empty object as the data payload
@@ -76,7 +79,6 @@ const confirmBet = async (betId: number) => {
           }
         }
       );
-      
       // Remove the confirmed bet from the list
       setBets(bets.filter(bet => bet.id !== betId));
     } catch (err: any) {
@@ -90,12 +92,48 @@ const confirmBet = async (betId: number) => {
     }
   };
 
-  // Apply filters
-  const filteredBets = bets.filter(bet => {
-    const statusMatch = selectedStatus === "All" || bet.status === selectedStatus;
-    const sportsbookMatch = selectedSportsbook === "All" || bet.sportsbook === selectedSportsbook;
-    return statusMatch && sportsbookMatch;
-  });
+  // Add sort function
+  const handleSort = (column: string) => {
+    // If clicking the same column, toggle direction
+    if (sortColumn === column) {
+      setSortDirection(sortDirection === "asc" ? "desc" : "asc");
+    } else {
+      // New column, default to descending
+      setSortColumn(column);
+      setSortDirection("desc");
+    }
+  };
+
+  // Apply filters and sorting
+  const sortedAndFilteredBets = () => {
+    // First apply filters
+    const filtered = bets.filter(bet => {
+      const statusMatch = selectedStatus === "All" || bet.status === selectedStatus;
+      const sportsbookMatch = selectedSportsbook === "All" || bet.sportsbook === selectedSportsbook;
+      return statusMatch && sportsbookMatch;
+    });
+    
+    // Then sort the filtered bets
+    return [...filtered].sort((a, b) => {
+      const valueA = a[sortColumn as keyof Bet];
+      const valueB = b[sortColumn as keyof Bet];
+      
+      // Handle different types of values
+      if (typeof valueA === 'number' && typeof valueB === 'number') {
+        return sortDirection === "asc" ? valueA - valueB : valueB - valueA;
+      } else {
+        // Convert to string for string comparison
+        const strA = String(valueA).toLowerCase();
+        const strB = String(valueB).toLowerCase();
+        return sortDirection === "asc" 
+          ? strA.localeCompare(strB) 
+          : strB.localeCompare(strA);
+      }
+    });
+  };
+
+  // Get the sorted and filtered bets
+  const displayBets = sortedAndFilteredBets();
 
   if (isLoading) {
     return <LoadingSpinner size="large" message="Loading unconfirmed bets..." />;
@@ -107,7 +145,7 @@ const confirmBet = async (betId: number) => {
         <h1 className="text-2xl font-bold text-gray-800">✅ Confirm Settled Bets</h1>
         <div className="flex items-center gap-2">
           <span className="text-sm text-gray-500">
-            {filteredBets.length} bets need confirmation
+            {displayBets.length} bets need confirmation
           </span>
           <button
             onClick={() => window.location.reload()}
@@ -201,21 +239,68 @@ const confirmBet = async (betId: number) => {
                 <table className="data-table">
                   <thead>
                     <tr>
-                      <th>Event</th>
-                      <th>Bet</th>
-                      <th>Sportsbook</th>
-                      <th>Type</th>
-                      <th className="text-right">Odds</th>
-                      <th className="text-right">Stake</th>
-                      <th>Status</th>
-                      <th className="text-right">Profit</th>
+                      <th 
+                        onClick={() => handleSort("id")} 
+                        className="cursor-pointer"
+                      >
+                        ID {sortColumn === "id" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th 
+                        onClick={() => handleSort("event_name")} 
+                        className="cursor-pointer"
+                      >
+                        Event {sortColumn === "event_name" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th 
+                        onClick={() => handleSort("bet_name")} 
+                        className="cursor-pointer"
+                      >
+                        Bet {sortColumn === "bet_name" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th 
+                        onClick={() => handleSort("sportsbook")} 
+                        className="cursor-pointer"
+                      >
+                        Sportsbook {sortColumn === "sportsbook" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th
+                        onClick={() => handleSort("bet_type")} 
+                        className="cursor-pointer"
+                      >
+                        Type {sortColumn === "bet_type" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th 
+                        onClick={() => handleSort("odds")} 
+                        className="cursor-pointer text-right"
+                      >
+                        Odds {sortColumn === "odds" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th 
+                        onClick={() => handleSort("stake")} 
+                        className="cursor-pointer text-right"
+                      >
+                        Stake {sortColumn === "stake" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th 
+                        onClick={() => handleSort("status")} 
+                        className="cursor-pointer"
+                      >
+                        Status {sortColumn === "status" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
+                      <th 
+                        onClick={() => handleSort("bet_profit")} 
+                        className="cursor-pointer text-right"
+                      >
+                        Profit {sortColumn === "bet_profit" && (sortDirection === "asc" ? "↑" : "↓")}
+                      </th>
                       <th className="text-center">Action</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredBets.length > 0 ? (
-                      filteredBets.map((bet) => (
+                    {displayBets.length > 0 ? (
+                      displayBets.map((bet) => (
                         <tr key={bet.id}>
+                          <td>{bet.id}</td>
                           <td className="max-w-xs truncate" title={bet.event_name}>
                             {bet.event_name}
                           </td>
@@ -246,7 +331,7 @@ const confirmBet = async (betId: number) => {
                       ))
                     ) : (
                       <tr>
-                        <td colSpan={9} className="p-4 text-center text-gray-500">
+                        <td colSpan={10} className="p-4 text-center text-gray-500">
                           No bets match your filter criteria
                         </td>
                       </tr>
