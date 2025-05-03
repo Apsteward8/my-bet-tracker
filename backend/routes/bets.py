@@ -4,6 +4,11 @@ from models import Bet, db
 from datetime import datetime, timedelta
 from sqlalchemy import func, text
 import math
+from werkzeug.utils import secure_filename
+import subprocess
+import os
+import sys
+from import_csv import import_bets_from_csv
 
 bp = Blueprint("bets", __name__, url_prefix="/api")
 
@@ -707,3 +712,64 @@ def confirm_bet_settlement(bet_id):
         db.session.rollback()
         print(f"Error confirming bet settlement: {str(e)}")
         return jsonify({"error": str(e)}), 500
+    
+@bp.route("/bets/import", methods=["POST"])
+def import_bets():
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file part"}), 400
+            
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+            
+        if file and file.filename.endswith('.csv'):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join('/tmp', filename)
+            file.save(filepath)
+            
+            # Import the bets
+            import_bets_from_csv(filepath)
+            
+            # Clean up the temporary file
+            os.remove(filepath)
+            
+            return jsonify({"message": "Import successful"}), 200
+        else:
+            return jsonify({"error": "Invalid file type. Please upload a CSV file"}), 400
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+@bp.route("/bets/sync", methods=["POST"])
+def sync_bets():
+    try:
+        # Path to your import_csv.py script
+        script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_csv.py")
+        
+        # Run the script in a separate process
+        result = subprocess.run(
+            [sys.executable, script_path],
+            capture_output=True,
+            text=True,
+            check=True
+        )
+        
+        # Return success message with any output from the script
+        return jsonify({
+            "message": "Sync completed successfully!",
+            "details": result.stdout
+        }), 200
+    
+    except subprocess.CalledProcessError as e:
+        # Handle script execution errors
+        return jsonify({
+            "error": "Error running sync script",
+            "details": e.stderr
+        }), 500
+    
+    except Exception as e:
+        # Handle other errors
+        return jsonify({
+            "error": str(e)
+        }), 500
