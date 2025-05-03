@@ -2,7 +2,7 @@
 from flask import Blueprint, jsonify, request
 from models import Bet, db
 from datetime import datetime, timedelta
-from sqlalchemy import func
+from sqlalchemy import func, text
 import math
 
 bp = Blueprint("bets", __name__, url_prefix="/api")
@@ -50,7 +50,8 @@ def get_bets():
                         "stake": b.stake,
                         "status": b.status,
                         "bet_profit": b.bet_profit,
-                        "event_start_date": b.event_start_date.isoformat() if b.event_start_date else None
+                        "event_start_date": b.event_start_date.isoformat() if b.event_start_date else None,
+                        "confirmed_settlement": b.confirmed_settlement
                     }
                     for b in pagination.items
                 ]
@@ -626,4 +627,83 @@ def get_ev_analysis():
         return jsonify(response), 200
         
     except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+
+# Get unconfirmed settled bets
+@bp.route("/bets/unconfirmed")
+def get_unconfirmed_bets():
+    try:
+        # Use text() to properly declare SQL queries
+        sql = text("""
+            SELECT id, event_name, bet_name, sportsbook, bet_type, 
+                   odds, stake, status, bet_profit, event_start_date
+            FROM bet 
+            WHERE status != 'pending' 
+            AND (confirmed_settlement != 1 OR confirmed_settlement IS NULL)
+            ORDER BY event_start_date DESC
+        """)
+        
+        result = db.session.execute(sql)
+        
+        # Convert result to list of dictionaries
+        bets = [
+            {
+                "id": row[0],
+                "event_name": row[1],
+                "bet_name": row[2],
+                "sportsbook": row[3],
+                "bet_type": row[4],
+                "odds": row[5],
+                "stake": float(row[6]) if row[6] else 0,
+                "status": row[7],
+                "bet_profit": float(row[8]) if row[8] else 0,
+                "event_start_date": row[9].isoformat() if row[9] else None
+            }
+            for row in result
+        ]
+        
+        return jsonify(bets)
+    
+    except Exception as e:
+        print(f"Error retrieving unconfirmed bets: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+# Updated confirm bet route in bets.py
+@bp.route("/bets/<int:bet_id>/confirm", methods=["PUT"])
+def confirm_bet_settlement(bet_id):
+    try:
+        # Use text() to properly declare SQL queries
+        sql = text("""
+            UPDATE bet
+            SET confirmed_settlement = 1
+            WHERE id = :bet_id
+        """)
+        
+        db.session.execute(sql, {"bet_id": bet_id})
+        
+        # Add confirmation notes if provided
+        if request.is_json and request.json and "confirmation_notes" in request.json:
+            notes_sql = text("""
+                UPDATE bet
+                SET confirmation_notes = :notes
+                WHERE id = :bet_id
+            """)
+            
+            db.session.execute(notes_sql, {
+                "bet_id": bet_id,
+                "notes": request.json["confirmation_notes"]
+            })
+        
+        db.session.commit()
+        
+        return jsonify({
+            "id": bet_id,
+            "confirmed_settlement": 1,
+            "message": "Bet settlement confirmed successfully"
+        })
+    
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error confirming bet settlement: {str(e)}")
         return jsonify({"error": str(e)}), 500
