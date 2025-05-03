@@ -14,3 +14,5 @@ class Bet(db.Model):
     status = db.Column(db.String(50))
     bet_profit = db.Column(db.Float)
     event_start_date = db.Column(db.DateTime)
+    confirmed_settlement = db.Column(db.Integer, default=0)
+    confirmation_notes = db.Column(db.Text)
