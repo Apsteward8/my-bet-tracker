@@ -5,6 +5,7 @@ const navItems = [
   { name: "Arbitrage", path: "/arbitrage", icon: "📊" },
   { name: "Confirm", path: "/confirm", icon: "✅" },
   { name: "EV Analysis", path: "/ev", icon: "📈" },
+  { name: "Expected Profit", path: "/expected-profit", icon: "💰" },
   { name: "History", path: "/history", icon: "📋" },
   { name: "Settings", path: "/settings", icon: "⚙️" },
 ];

@@ -10,6 +10,11 @@ import os
 import sys
 from import_csv import import_bets_from_csv
 
+# Make the import dynamic to avoid circular imports
+def get_import_function():
+    import import_csv
+    return import_csv.import_bets_from_csv
+
 bp = Blueprint("bets", __name__, url_prefix="/api")
 
 # Get bets with optional pagination
@@ -356,7 +361,7 @@ def get_ev_analysis():
         query = query.filter(Bet.event_start_date <= datetime.now())
         
         # Filter out player props if needed
-        if not include_player_props and hasattr(Bet, 'market_name'):
+        if not include_player_props:
             query = query.filter(~Bet.market_name.ilike('%player%'))
         
         # By default, filter out pending bets unless explicitly included
@@ -380,21 +385,25 @@ def get_ev_analysis():
         
         # Step 2: Process bets with calculated fields
         for bet in all_bets:
+            # Convert Decimal to float for JSON serialization
+            bet_stake = float(bet.stake) if bet.stake is not None else 0
+            bet_profit = float(bet.bet_profit) if bet.bet_profit is not None else 0
+            
             # Base processed bet with null values for CLV calculations
             processed_bet = {
                 "id": bet.id,
                 "event_name": bet.event_name,
                 "bet_name": bet.bet_name,
                 "sportsbook": bet.sportsbook,
-                "sport": getattr(bet, 'sport', None),
+                "sport": bet.sport,
                 "bet_type": bet.bet_type,
                 "odds": bet.odds,
                 "clv": bet.clv,
-                "stake": bet.stake,
+                "stake": bet_stake,
                 "status": bet.status,
-                "bet_profit": bet.bet_profit,
+                "bet_profit": bet_profit,
                 "event_start_date": bet.event_start_date.isoformat() if bet.event_start_date else None,
-                "market_name": getattr(bet, 'market_name', None),
+                "market_name": bet.market_name,
                 # Default values for CLV fields
                 "implied_prob": None,
                 "clv_implied_prob": None,
@@ -416,7 +425,7 @@ def get_ev_analysis():
                 if implied_prob and clv_implied_prob:
                     # Calculate EV metrics
                     ev_percent = calculate_ev_percent(implied_prob, clv_implied_prob)
-                    expected_profit = bet.stake * ev_percent
+                    expected_profit = bet_stake * ev_percent
                     
                     # Determine if bet beat closing line
                     beat_clv = bet.odds > bet.clv
@@ -632,10 +641,11 @@ def get_ev_analysis():
         return jsonify(response), 200
         
     except Exception as e:
+        print(f"Error in EV analysis: {str(e)}")
+        import traceback
+        traceback.print_exc()
         return jsonify({"error": str(e)}), 500
-    
 
-# Get unconfirmed settled bets
 @bp.route("/bets/unconfirmed")
 def get_unconfirmed_bets():
     try:
@@ -645,8 +655,8 @@ def get_unconfirmed_bets():
                    odds, stake, status, bet_profit, event_start_date
             FROM bet 
             WHERE status != 'pending' 
-            AND (confirmed_settlement != 1 OR confirmed_settlement IS NULL)
-            ORDER BY event_start_date DESC
+            AND (confirmed_settlement IS NULL OR confirmed_settlement = 0)
+            ORDER BY id DESC
         """)
         
         result = db.session.execute(sql)
@@ -674,18 +684,17 @@ def get_unconfirmed_bets():
         print(f"Error retrieving unconfirmed bets: {str(e)}")
         return jsonify({"error": str(e)}), 500
 
-# Updated confirm bet route in bets.py
 @bp.route("/bets/<int:bet_id>/confirm", methods=["PUT"])
 def confirm_bet_settlement(bet_id):
     try:
         # Use text() to properly declare SQL queries
         sql = text("""
             UPDATE bet
-            SET confirmed_settlement = 1
+            SET confirmed_settlement = :value
             WHERE id = :bet_id
         """)
         
-        db.session.execute(sql, {"bet_id": bet_id})
+        db.session.execute(sql, {"bet_id": bet_id, "value": True})
         
         # Add confirmation notes if provided
         if request.is_json and request.json and "confirmation_notes" in request.json:
@@ -704,7 +713,7 @@ def confirm_bet_settlement(bet_id):
         
         return jsonify({
             "id": bet_id,
-            "confirmed_settlement": 1,
+            "confirmed_settlement": True,
             "message": "Bet settlement confirmed successfully"
         })
     
@@ -747,13 +756,24 @@ def sync_bets():
         # Path to your import_csv.py script
         script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_csv.py")
         
+        # Check if the script exists
+        if not os.path.exists(script_path):
+            return jsonify({
+                "error": f"Import script not found at {script_path}"
+            }), 404
+        
         # Run the script in a separate process
         result = subprocess.run(
             [sys.executable, script_path],
             capture_output=True,
-            text=True,
-            check=True
+            text=True
         )
+        
+        if result.returncode != 0:
+            return jsonify({
+                "error": "Error running sync script",
+                "details": result.stderr
+            }), 500
         
         # Return success message with any output from the script
         return jsonify({
@@ -761,15 +781,210 @@ def sync_bets():
             "details": result.stdout
         }), 200
     
-    except subprocess.CalledProcessError as e:
-        # Handle script execution errors
-        return jsonify({
-            "error": "Error running sync script",
-            "details": e.stderr
-        }), 500
-    
     except Exception as e:
         # Handle other errors
         return jsonify({
             "error": str(e)
         }), 500
+
+@bp.route("/bets/expected-profit")
+def get_expected_profit():
+    """
+    Get all pending bets with calculated expected profit metrics.
+    
+    Query parameters:
+    - start_date: ISO format date string (default: today)
+    - end_date: ISO format date string (default: future)
+    - include_player_props: "true" or "false" (default: "false")
+    """
+    try:
+        # Parse query parameters
+        include_player_props = request.args.get('include_player_props', 'false').lower() == 'true'
+        
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
+        
+        # Default to today for start date if not provided
+        if not start_date_str:
+            start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        else:
+            try:
+                start_date = datetime.fromisoformat(start_date_str)
+            except ValueError:
+                # Invalid date format, use today
+                start_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        
+        # Default to no end date limit if not provided
+        if not end_date_str:
+            end_date = None
+        else:
+            try:
+                end_date = datetime.fromisoformat(end_date_str)
+            except ValueError:
+                # Invalid date format, use no limit
+                end_date = None
+        
+        # Get all pending bets within the date range
+        query = Bet.query.filter(Bet.status == "pending")
+        
+        # Apply date filters
+        query = query.filter(Bet.event_start_date >= start_date)
+        
+        if end_date:
+            # Add 1 day to end_date and use < instead of <= to include the entire end date
+            next_day = end_date + timedelta(days=1)
+            query = query.filter(Bet.event_start_date < next_day)
+        
+        # Filter out player props if needed
+        if not include_player_props:
+            query = query.filter(~Bet.market_name.ilike('%player%'))
+        
+        # Execute query and get all bets
+        pending_bets = query.all()
+        
+        # If no bets match criteria
+        if not pending_bets:
+            return jsonify({
+                "bets": [],
+                "stats": {
+                    "total_bets": 0,
+                    "total_stake": 0,
+                    "expected_profit": 0,
+                    "expected_roi": 0,
+                },
+                "message": "No pending bets found matching your criteria"
+            }), 200
+        
+        # Process bets with calculated fields
+        processed_bets = []
+        total_stake = 0
+        total_expected_profit = 0
+        
+        for bet in pending_bets:
+            # Convert Decimal to float for JSON serialization
+            bet_stake = float(bet.stake) if bet.stake is not None else 0
+            bet_profit = float(bet.bet_profit) if bet.bet_profit is not None else 0
+            
+            # Calculate implied probabilities and expected profit
+            implied_prob = None
+            expected_profit = None
+            expected_roi = None
+            
+            # Only calculate if CLV is valid
+            has_valid_clv = bet.clv is not None and bet.clv != 0
+            
+            if has_valid_clv:
+                # Calculate implied probabilities
+                implied_prob = american_odds_to_implied_prob(bet.odds)
+                clv_implied_prob = american_odds_to_implied_prob(bet.clv)
+                
+                # Calculate EV metrics
+                if implied_prob and clv_implied_prob:
+                    ev_percent = calculate_ev_percent(implied_prob, clv_implied_prob)
+                    expected_profit = bet_stake * ev_percent
+                    
+                    # Add to totals for summary stats
+                    total_stake += bet_stake
+                    total_expected_profit += expected_profit
+            
+            # Format event start time for display
+            event_date = bet.event_start_date.strftime("%Y-%m-%d") if bet.event_start_date else None
+            event_time = bet.event_start_date.strftime("%I:%M %p") if bet.event_start_date else None
+            
+            # Create processed bet object
+            processed_bet = {
+                "id": bet.id,
+                "event_name": bet.event_name,
+                "bet_name": bet.bet_name,
+                "sportsbook": bet.sportsbook,
+                "sport": bet.sport,
+                "odds": bet.odds,
+                "clv": bet.clv,
+                "stake": bet_stake,
+                "potential_payout": float(bet.potential_payout) if bet.potential_payout else 0,
+                "event_date": event_date,
+                "event_time": event_time,
+                "event_start_date": bet.event_start_date.isoformat() if bet.event_start_date else None,
+                "implied_prob": implied_prob,
+                "expected_profit": expected_profit,
+                "ev_percent": (ev_percent * 100) if 'ev_percent' in locals() else None
+            }
+            
+            processed_bets.append(processed_bet)
+        
+        # Calculate expected ROI
+        expected_roi = (total_expected_profit / total_stake * 100) if total_stake > 0 else 0
+        
+        # Group bets by date
+        bets_by_date = {}
+        for bet in processed_bets:
+            if bet["event_date"] not in bets_by_date:
+                bets_by_date[bet["event_date"]] = {
+                    "date": bet["event_date"],
+                    "bets": [],
+                    "total_stake": 0,
+                    "expected_profit": 0
+                }
+            
+            bets_by_date[bet["event_date"]]["bets"].append(bet)
+            bets_by_date[bet["event_date"]]["total_stake"] += bet["stake"]
+            
+            if bet["expected_profit"] is not None:
+                bets_by_date[bet["event_date"]]["expected_profit"] += bet["expected_profit"]
+        
+        # Convert to list and sort by date
+        daily_summaries = list(bets_by_date.values())
+        daily_summaries.sort(key=lambda x: x["date"])
+        
+        # Calculate daily ROIs
+        for day in daily_summaries:
+            day["expected_roi"] = (day["expected_profit"] / day["total_stake"] * 100) if day["total_stake"] > 0 else 0
+        
+        # Group bets by sportsbook
+        sportsbook_summaries = {}
+        for bet in processed_bets:
+            if bet["sportsbook"] not in sportsbook_summaries:
+                sportsbook_summaries[bet["sportsbook"]] = {
+                    "name": bet["sportsbook"],
+                    "bet_count": 0,
+                    "total_stake": 0,
+                    "expected_profit": 0
+                }
+            
+            sportsbook_summaries[bet["sportsbook"]]["bet_count"] += 1
+            sportsbook_summaries[bet["sportsbook"]]["total_stake"] += bet["stake"]
+            
+            if bet["expected_profit"] is not None:
+                sportsbook_summaries[bet["sportsbook"]]["expected_profit"] += bet["expected_profit"]
+        
+        # Calculate ROIs and convert to list
+        for sb in sportsbook_summaries.values():
+            sb["expected_roi"] = (sb["expected_profit"] / sb["total_stake"] * 100) if sb["total_stake"] > 0 else 0
+        
+        sportsbook_list = list(sportsbook_summaries.values())
+        sportsbook_list.sort(key=lambda x: x["expected_profit"], reverse=True)
+        
+        # Construct response
+        response = {
+            "bets": processed_bets,
+            "stats": {
+                "total_bets": len(processed_bets),
+                "total_stake": total_stake,
+                "expected_profit": total_expected_profit,
+                "expected_roi": expected_roi
+            },
+            "daily_summaries": daily_summaries,
+            "sportsbook_summaries": sportsbook_list,
+            "date_range": {
+                "start": start_date.isoformat() if start_date else None,
+                "end": end_date.isoformat() if end_date else None
+            }
+        }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        print(f"Error in expected profit analysis: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500

@@ -14,6 +14,7 @@ import axios from "axios";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import LoadingSpinner from "../components/LoadingSpinner";
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5007';
 
 // ===== Types =====
 interface ProcessedBet {
@@ -525,11 +526,12 @@ export default function EVAnalysisPage() {
     if (start) params.append('start_date', start);
     if (end) params.append('end_date', end);
     
-    axios.get(`http://localhost:5007/api/ev-analysis?${params.toString()}`)
+    axios.get(`${API_URL}/api/ev-analysis?${params.toString()}`)
       .then(response => {
         if (!response.data) {
           setError("Invalid API response");
           setIsLoading(false);
+          console.log("Fetched data for EV bets")
           return;
         }
 
@@ -628,7 +630,8 @@ export default function EVAnalysisPage() {
 
     try {
       // Call the backend endpoint
-      const response = await axios.get(`http://localhost:5007/api/ev-analysis?${params.toString()}`);
+      const response = await axios.get(`${API_URL}/api/ev-analysis?${params.toString()}`);
+      console.log("[fetchEVAnalysisData] received response:", response);
 
       // Check for valid response
       if (!response.data) {
@@ -745,7 +748,7 @@ export default function EVAnalysisPage() {
 
       try {
         // Call the backend endpoint
-        const response = await axios.get(`http://localhost:5007/api/ev-analysis?${params.toString()}`);
+        const response = await axios.get(`${API_URL}/api/ev-analysis?${params.toString()}`);
 
         // Process response
         if (!response.data) {

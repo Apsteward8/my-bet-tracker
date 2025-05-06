@@ -2,6 +2,7 @@
 import { useState } from "react";
 import axios from "axios";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "./ui/Card";
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5007';
 
 export default function CsvImport() {
   const [file, setFile] = useState<File | null>(null);
@@ -27,11 +28,15 @@ export default function CsvImport() {
     formData.append("file", file);
 
     try {
-      const response = await axios.post("http://localhost:5007/api/bets/import", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-      });
+      const response = await axios.post(
+        `${API_URL}/api/bets/import`,
+        formData,
+        {
+          headers: {
+            "Content-Type": "multipart/form-data",
+          },
+        }
+      );
 
       setMessage({ text: "Import successful!", type: "success" });
     } catch (error: any) {

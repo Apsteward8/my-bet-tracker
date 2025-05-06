@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5007';
 
 interface Bet {
   id: number;
@@ -19,7 +20,7 @@ export default function BetsPage() {
   const [bets, setBets] = useState<Bet[]>([]);
 
   useEffect(() => {
-    axios.get("http://localhost:5007/api/bets")
+    axios.get(`${API_URL}/api/bets`)
       .then((res) => setBets(res.data))
       .catch((err) => console.error("Error fetching bets:", err));
   }, []);

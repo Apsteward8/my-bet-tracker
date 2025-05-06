@@ -4,6 +4,7 @@ import DashboardPage from "./pages/DashboardPage";
 import ArbitragePage from "./pages/ArbitragePage";
 import ConfirmPage from "./pages/ConfirmPage";
 import EVAnalysisPage from "./pages/EVAnalysisPage";
+import ExpectedProfitPage from "./pages/ExpectedProfitPage";
 import BetHistoryPage from "./pages/BetHistoryPage";
 import SettingsPage from "./pages/SettingsPage";
 
@@ -19,6 +20,7 @@ function App() {
               <Route path="/arbitrage" element={<ArbitragePage />} />
               <Route path="/confirm" element={<ConfirmPage />} />
               <Route path="/ev" element={<EVAnalysisPage />} />
+              <Route path="/expected-profit" element={<ExpectedProfitPage />} />
               <Route path="/history" element={<BetHistoryPage />} />
               <Route path="/settings" element={<SettingsPage />} />
             </Routes>

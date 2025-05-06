@@ -1,8 +1,9 @@
-// pages/ConfirmPage.tsx
+// Updated ConfirmPage.tsx with sync button
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import LoadingSpinner from "../components/LoadingSpinner";
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5007';
 
 interface Bet {
   id: number;
@@ -24,46 +25,50 @@ export default function ConfirmPage() {
   const [selectedSportsbook, setSelectedSportsbook] = useState<string>("All");
   const [sportsbookOptions, setSportsbookOptions] = useState<string[]>([]);
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
-  
-  // Add sorting state
   const [sortColumn, setSortColumn] = useState<string>("id");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
+  
+  // Add sync state
+  const [isSyncing, setIsSyncing] = useState<boolean>(false);
+  const [syncMessage, setSyncMessage] = useState<{text: string, type: "success" | "error"} | null>(null);
 
   // Fetch unconfirmed settled bets
-  useEffect(() => {
-    const fetchBets = async () => {
-      setIsLoading(true);
-      try {
-        const response = await axios.get("http://localhost:5007/api/bets/unconfirmed");
-        const fetchedBets = response.data;
+  const fetchBets = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await axios.get(`${API_URL}/api/bets/unconfirmed`);
+      const fetchedBets = response.data;
+      
+      if (Array.isArray(fetchedBets)) {
+        setBets(fetchedBets);
         
-        if (Array.isArray(fetchedBets)) {
-          setBets(fetchedBets);
-          
-          // Extract unique statuses and sportsbooks for filters
-          const uniqueStatuses = Array.from(new Set(fetchedBets.map((bet: Bet) => bet.status)));
-          const uniqueSportsbooks = Array.from(new Set(fetchedBets.map((bet: Bet) => bet.sportsbook)));
-          
-          setStatusOptions(uniqueStatuses as string[]);
-          setSportsbookOptions(uniqueSportsbooks as string[]);
-        } else {
-          console.error("Unexpected response format:", fetchedBets);
-          setError("Server returned an unexpected response format");
-        }
+        // Extract unique statuses and sportsbooks for filters
+        const uniqueStatuses = Array.from(new Set(fetchedBets.map((bet: Bet) => bet.status)));
+        const uniqueSportsbooks = Array.from(new Set(fetchedBets.map((bet: Bet) => bet.sportsbook)));
         
-        setIsLoading(false);
-      } catch (err: any) {
-        console.error("Error fetching unconfirmed bets:", err);
-        
-        // Extract more specific error message if available
-        const errorMessage = err.response?.data?.error || 
-                             "Failed to load unconfirmed bets. Please try again later.";
-        
-        setError(errorMessage);
-        setIsLoading(false);
+        setStatusOptions(uniqueStatuses as string[]);
+        setSportsbookOptions(uniqueSportsbooks as string[]);
+      } else {
+        console.error("Unexpected response format:", fetchedBets);
+        setError("Server returned an unexpected response format");
       }
-    };
+      
+      setIsLoading(false);
+    } catch (err: any) {
+      console.error("Error fetching unconfirmed bets:", err);
+      
+      // Extract more specific error message if available
+      const errorMessage = err.response?.data?.error || 
+                           "Failed to load unconfirmed bets. Please try again later.";
+      
+      setError(errorMessage);
+      setIsLoading(false);
+    }
+  };
 
+  // Initial data load
+  useEffect(() => {
     fetchBets();
   }, []);
 
@@ -71,7 +76,7 @@ export default function ConfirmPage() {
   const confirmBet = async (betId: number) => {
     try {
       await axios.put(
-        `http://localhost:5007/api/bets/${betId}/confirm`,
+        `${API_URL}/api/bets/${betId}/confirm`,
         {}, // Empty object as the data payload
         {
           headers: {
@@ -89,6 +94,46 @@ export default function ConfirmPage() {
                            "Failed to confirm bet. Please try again.";
       
       setError(errorMessage);
+    }
+  };
+
+  // Handle sync button click
+  const handleSync = async () => {
+    setIsSyncing(true);
+    setSyncMessage(null);
+    
+    try {
+      const response = await axios.post(
+        `${API_URL}/api/bets/sync`,
+        {},
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      setSyncMessage({
+        text: "Sync completed successfully! Refreshing data...",
+        type: "success"
+      });
+      
+      // Refresh the bets list
+      await fetchBets();
+      
+    } catch (err: any) {
+      console.error("Error syncing bets:", err);
+      
+      // Extract more specific error message if available
+      const errorMessage = err.response?.data?.error || 
+                          "Failed to sync bets. Please try again.";
+      
+      setSyncMessage({
+        text: errorMessage,
+        type: "error"
+      });
+    } finally {
+      setIsSyncing(false);
     }
   };
 
@@ -147,6 +192,31 @@ export default function ConfirmPage() {
           <span className="text-sm text-gray-500">
             {displayBets.length} bets need confirmation
           </span>
+          
+          {/* Sync button */}
+          <button
+            onClick={handleSync}
+            disabled={isSyncing}
+            className={`px-4 py-1.5 rounded text-white flex items-center gap-1 ${
+              isSyncing ? "bg-gray-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"
+            }`}
+            title="Sync bets from CSV file"
+          >
+            {isSyncing ? (
+              <>
+                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Syncing...
+              </>
+            ) : (
+              <>
+                🔄 Sync Bets
+              </>
+            )}
+          </button>
+          
           <button
             onClick={() => window.location.reload()}
             className="p-2 rounded-full hover:bg-gray-200"
@@ -156,6 +226,18 @@ export default function ConfirmPage() {
           </button>
         </div>
       </div>
+
+      {/* Display sync message if any */}
+      {syncMessage && (
+        <div className={`${
+          syncMessage.type === "success" ? "bg-green-50 border-green-200 text-green-800" : "bg-red-50 border-red-200 text-red-800"
+        } rounded-lg p-4 mb-6 border flex items-center`}>
+          <div className="mr-2 text-lg">
+            {syncMessage.type === "success" ? "✅" : "❌"}
+          </div>
+          <p>{syncMessage.text}</p>
+        </div>
+      )}
 
       {/* Display error message if any */}
       {error && (

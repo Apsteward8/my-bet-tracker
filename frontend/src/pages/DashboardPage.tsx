@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import axios from "axios";
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5007';
 
 interface Bet {
   id: number;
@@ -51,7 +52,7 @@ export default function DashboardPage() {
     
     // Fetch bets with pagination
     axios
-      .get("http://localhost:5007/api/bets")
+      .get(`${API_URL}/api/bets`)
       .then((res) => {
         console.log("API response:", res.data); // Debug log
         
@@ -120,7 +121,7 @@ export default function DashboardPage() {
   const loadPage = (page: number) => {
     setIsLoading(true);
     axios
-      .get(`http://localhost:5007/api/bets?page=${page}`)
+      .get(`${API_URL}/api/bets?page=${page}`)
       .then((res) => {
         if (res.data && typeof res.data === 'object' && 'items' in res.data) {
           const paginatedData = res.data as PaginatedResponse;
