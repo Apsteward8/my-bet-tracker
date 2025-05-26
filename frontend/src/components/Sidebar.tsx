@@ -7,6 +7,7 @@ const navItems = [
   { name: "EV Analysis", path: "/ev", icon: "📈" },
   { name: "Expected Profit", path: "/expected-profit", icon: "💰" },
   { name: "History", path: "/history", icon: "📋" },
+  { name: "Exchange", path: "/exchange", icon: "🧮" },
   { name: "Settings", path: "/settings", icon: "⚙️" },
 ];
 

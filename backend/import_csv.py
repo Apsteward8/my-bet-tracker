@@ -72,7 +72,7 @@ def import_bets_from_csv(csv_path):
         for _, row in df.iterrows():
             # Create filter dict with only available columns
             filter_dict = {}
-            for field in ["created_at", "event_name", "bet_name", "sportsbook"]:
+            for field in ["created_at", "event_name", "bet_name", "sportsbook", "event_start_date", "market_name", "stake"]:
                 if field in row and pd.notna(row[field]):
                     filter_dict[field] = row[field]
             
@@ -114,7 +114,7 @@ def import_bets_from_csv(csv_path):
                 try:
                     # Check for changes in key fields (e.g., settlement status)
                     fields_to_check = [
-                        "status", "bet_profit", "potential_payout", "clv"
+                        "status", "bet_profit", "potential_payout", "clv", "sportsbook", "event_start_date", "market_name", "stake"
                     ]
                     
                     updated = False

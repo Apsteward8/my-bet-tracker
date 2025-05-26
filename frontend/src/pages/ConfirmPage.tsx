@@ -1,4 +1,4 @@
-// Updated ConfirmPage.tsx with sync button
+// pages/ConfirmPage.tsx (with responsive updates)
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
@@ -180,16 +180,88 @@ export default function ConfirmPage() {
   // Get the sorted and filtered bets
   const displayBets = sortedAndFilteredBets();
 
+  // Format money values
+  const formatMoney = (amount: number): string => {
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 2
+    }).format(amount);
+  };
+
+  // Get color class based on value
+  const getColorClass = (value: number): string => {
+    if (value > 0) return "text-green-600";
+    if (value < 0) return "text-red-600";
+    return "text-yellow-500";
+  };
+
+  // Format odds display
+  const formatOdds = (odds: number): string => {
+    return odds > 0 ? `+${odds}` : odds.toString();
+  };
+
+  // Render a mobile bet card
+  const renderMobileBetCard = (bet: Bet) => (
+    <div key={bet.id} className="bg-white rounded-lg shadow p-4 mb-4">
+      <div className="font-medium mb-2">{bet.event_name}</div>
+      
+      <div className="space-y-2 text-sm mb-4">
+        <div className="flex justify-between items-center">
+          <span className="text-gray-600">Bet:</span>
+          <span>{bet.bet_name}</span>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <span className="text-gray-600">Sportsbook:</span>
+          <span>{bet.sportsbook}</span>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <span className="text-gray-600">Type:</span>
+          <span>{bet.bet_type}</span>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <span className="text-gray-600">Odds:</span>
+          <span>{formatOdds(bet.odds)}</span>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <span className="text-gray-600">Stake:</span>
+          <span>{formatMoney(bet.stake)}</span>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <span className="text-gray-600">Profit:</span>
+          <span className={getColorClass(bet.bet_profit)}>{formatMoney(bet.bet_profit)}</span>
+        </div>
+        
+        <div className="flex justify-between items-center">
+          <span className="text-gray-600">Status:</span>
+          <span className={`status-badge ${bet.status.toLowerCase()}`}>{bet.status}</span>
+        </div>
+      </div>
+      
+      <button
+        onClick={() => confirmBet(bet.id)}
+        className="w-full px-3 py-2 bg-green-600 text-white rounded hover:bg-green-700 flex items-center justify-center gap-1"
+      >
+        <span>Confirm</span> <span>✅</span>
+      </button>
+    </div>
+  );
+
   if (isLoading) {
     return <LoadingSpinner size="large" message="Loading unconfirmed bets..." />;
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold text-gray-800">✅ Confirm Settled Bets</h1>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-2">
+        <h1 className="text-xl lg:text-2xl font-bold text-gray-800">✅ Confirm Settled Bets</h1>
         <div className="flex items-center gap-2">
-          <span className="text-sm text-gray-500">
+          <span className="text-xs md:text-sm text-gray-500">
             {displayBets.length} bets need confirmation
           </span>
           
@@ -197,7 +269,7 @@ export default function ConfirmPage() {
           <button
             onClick={handleSync}
             disabled={isSyncing}
-            className={`px-4 py-1.5 rounded text-white flex items-center gap-1 ${
+            className={`px-3 py-1.5 rounded text-white flex items-center gap-1 text-sm ${
               isSyncing ? "bg-gray-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"
             }`}
             title="Sync bets from CSV file"
@@ -212,7 +284,7 @@ export default function ConfirmPage() {
               </>
             ) : (
               <>
-                🔄 Sync Bets
+                🔄 Sync
               </>
             )}
           </button>
@@ -231,19 +303,19 @@ export default function ConfirmPage() {
       {syncMessage && (
         <div className={`${
           syncMessage.type === "success" ? "bg-green-50 border-green-200 text-green-800" : "bg-red-50 border-red-200 text-red-800"
-        } rounded-lg p-4 mb-6 border flex items-center`}>
+        } rounded-lg p-4 mb-4 border flex items-center`}>
           <div className="mr-2 text-lg">
             {syncMessage.type === "success" ? "✅" : "❌"}
           </div>
-          <p>{syncMessage.text}</p>
+          <p className="text-sm md:text-base">{syncMessage.text}</p>
         </div>
       )}
 
       {/* Display error message if any */}
       {error && (
-        <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 mb-6">
+        <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 mb-4">
           <h3 className="text-lg font-medium mb-2">Error</h3>
-          <p>{error}</p>
+          <p className="text-sm md:text-base">{error}</p>
           <button
             onClick={() => window.location.reload()}
             className="mt-3 px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700"
@@ -315,8 +387,19 @@ export default function ConfirmPage() {
               </CardContent>
             </Card>
 
-            {/* Bets Table */}
-            <div className="bg-white rounded-lg shadow overflow-hidden">
+            {/* Mobile view - Card layout */}
+            <div className="md:hidden">
+              {displayBets.length > 0 ? (
+                displayBets.map(bet => renderMobileBetCard(bet))
+              ) : (
+                <div className="bg-white rounded-lg shadow p-4 text-center text-gray-500">
+                  No bets match your filter criteria
+                </div>
+              )}
+            </div>
+
+            {/* Desktop view - Table */}
+            <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
               <div className="overflow-x-auto">
                 <table className="data-table">
                   <thead>

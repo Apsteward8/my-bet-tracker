@@ -1,145 +1,12 @@
-// pages/ExchangeCalculator.tsx
+// pages/SharpExposurePage.tsx
 import { useState, useEffect } from "react";
 
-interface SharpExposureCalculation {
-  // Input values
-  availableOdds: number;
-  availableLiquidity: number;
-  
-  // Calculated sharp side values
-  sharpOdds: number;
-  sharpStake: number;
-  sharpPayout: number;
-  
-  // Recommended bet values
-  recommendedStake: number;
-  potentialProfit: number;
-  payoutRatio: number;
-}
-
-export default function ExchangeCalculator() {
+export default function SharpExposurePage() {
   const [availableOdds, setAvailableOdds] = useState<number>(0);
   const [availableLiquidity, setAvailableLiquidity] = useState<number>(0);
-  const [payoutScaleFactor, setPayoutScaleFactor] = useState<number>(0.005); // $1 per $200 of payout (0.5%)
-  const [maxBetSize, setMaxBetSize] = useState<number>(100); // Default max bet of $100
-  const [calculation, setCalculation] = useState<SharpExposureCalculation | null>(null);
+  const [showSettings, setShowSettings] = useState<boolean>(false);
+  const [calculation, setCalculation] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
-
-  // Calculate opposing odds (convert from American to decimal and back)
-  const calculateSharpOdds = (americanOdds: number): number => {
-    if (americanOdds === 0) return 0;
-    // The opposing odds are just the negative of the original odds
-    return -americanOdds;
-  };
-
-  // Calculate sharp's stake based on odds and available liquidity
-  const calculateSharpStake = (
-    americanOdds: number,
-    liquidity: number
-  ): number => {
-    if (americanOdds === 0 || liquidity === 0) return 0;
-
-    // Calculate the sharp's stake based on American odds
-    if (americanOdds > 0) {
-      // For positive odds (e.g., +200)
-      // If $1000 is available at +200, someone bet $2000 at -200
-      return liquidity * (americanOdds / 100);
-    } else {
-      // For negative odds (e.g., -150)
-      // If $1000 is available at -150, someone bet $666.67 at +150
-      return liquidity * (100 / Math.abs(americanOdds));
-    }
-  };
-
-  // Calculate sharp's potential payout (stake + profit)
-  const calculateSharpPayout = (
-    americanOdds: number,
-    stake: number
-  ): number => {
-    if (americanOdds === 0 || stake === 0) return 0;
-
-    if (americanOdds > 0) {
-      // For +200 odds, a $100 stake yields $300 payout ($100 stake + $200 profit)
-      return stake + (stake * (americanOdds / 100));
-    } else {
-      // For -150 odds, a $150 stake yields $250 payout ($150 stake + $100 profit)
-      return stake + (stake * (100 / Math.abs(americanOdds)));
-    }
-  };
-
-  // Calculate potential profit based on odds and stake
-  const calculatePotentialProfit = (odds: number, stake: number): number => {
-    if (odds === 0 || stake === 0) return 0;
-    
-    // Calculate for the sharp's odds, since we're copying their bet
-    const sharpOdds = -odds;
-    
-    if (sharpOdds > 0) {
-      return stake * (sharpOdds / 100);
-    } else {
-      return stake * (100 / Math.abs(sharpOdds));
-    }
-  };
-
-  // Calculate recommended stake based on sharp's payout and scaling factor
-  const calculateRecommendedStake = (
-    payout: number,
-    scaleFactor: number,
-    maxBet: number
-  ): number => {
-    if (payout === 0) return 0;
-
-    // Calculate stake based on payout
-    let recommendedStake = payout * scaleFactor;
-    
-    // Cap at maximum bet size
-    recommendedStake = Math.min(recommendedStake, maxBet);
-    
-    // Return with 2 decimal places
-    return parseFloat(recommendedStake.toFixed(2));
-  };
-
-  // Calculate when inputs change
-  useEffect(() => {
-    if (availableOdds !== 0 && availableLiquidity > 0) {
-      try {
-        // Calculate sharp side information
-        const sharpOdds = calculateSharpOdds(availableOdds);
-        const sharpStake = calculateSharpStake(availableOdds, availableLiquidity);
-        const sharpPayout = calculateSharpPayout(sharpOdds, sharpStake);
-        
-        // Calculate recommended stake and potential profit
-        const recommendedStake = calculateRecommendedStake(
-          sharpPayout, 
-          payoutScaleFactor, 
-          maxBetSize
-        );
-        
-        const potentialProfit = calculatePotentialProfit(availableOdds, recommendedStake);
-        
-        // Calculate payout ratio (how much you bet per $1000 of sharp payout)
-        const payoutRatio = recommendedStake / (sharpPayout / 1000);
-        
-        setCalculation({
-          availableOdds,
-          availableLiquidity,
-          sharpOdds,
-          sharpStake,
-          sharpPayout,
-          recommendedStake,
-          potentialProfit,
-          payoutRatio
-        });
-        
-        setError(null);
-      } catch (err) {
-        setError("Error in calculation. Please check your inputs.");
-        setCalculation(null);
-      }
-    } else {
-      setCalculation(null);
-    }
-  }, [availableOdds, availableLiquidity, payoutScaleFactor, maxBetSize]);
 
   // Handle odds input change
   const handleOddsChange = (value: string) => {
@@ -153,23 +20,115 @@ export default function ExchangeCalculator() {
     setAvailableLiquidity(parsedValue);
   };
 
-  // Handle payout ratio change
-  const handlePayoutScaleChange = (value: string) => {
-    const parsedValue = parseFloat(value) || 0;
-    const factor = parsedValue / 200; // Convert from $x per $200 to percentage
-    setPayoutScaleFactor(factor);
-  };
+  // Calculate when inputs change
+  useEffect(() => {
+    try {
+      if (availableOdds !== 0 && availableLiquidity > 0) {
+        // Calculate sharp's position
+        const sharpOdds = -availableOdds;
+        let sharpStake = 0;
+        
+        // Calculate the sharp's stake based on American odds
+        if (availableOdds > 0) {
+          sharpStake = availableLiquidity * (availableOdds / 100);
+        } else {
+          sharpStake = availableLiquidity * (100 / Math.abs(availableOdds));
+        }
+        
+        // Calculate sharp's potential payout
+        let sharpPayout = 0;
+        if (sharpOdds > 0) {
+          sharpPayout = sharpStake + (sharpStake * (sharpOdds / 100));
+        } else {
+          sharpPayout = sharpStake + (sharpStake * (100 / Math.abs(sharpOdds)));
+        }
+        
+        // Determine recommendation based on payout threshold
+        let recommendedStake = 0;
+        let recommendation = "";
+        
+        if (sharpPayout < 750) {
+          // For payouts below $750, use OddsJam minimum
+          recommendedStake = 5;
+          recommendation = "OddsJam Minimum";
+        } else if (sharpPayout >= 750 && sharpPayout <= 2000) {
+          // For payouts between $750-$2000, skip the bet
+          recommendedStake = 0;
+          recommendation = "Skip - Gray Area";
+        } else {
+          // For payouts above $2000, use scaling factor
+          // $10 per $2000 in potential payout
+          recommendedStake = sharpPayout * (10 / 2000);
+          recommendation = "Sharp Copy";
+        }
+        
+        // Calculate potential profit
+        let potentialProfit = 0;
+        if (sharpOdds > 0) {
+          potentialProfit = recommendedStake * (sharpOdds / 100);
+        } else {
+          potentialProfit = recommendedStake * (100 / Math.abs(sharpOdds));
+        }
+        
+        // Store all calculated values
+        setCalculation({
+          availableOdds,
+          availableLiquidity,
+          sharpOdds,
+          sharpStake,
+          sharpPayout,
+          recommendedStake,
+          potentialProfit,
+          recommendation
+        });
+      } else {
+        setCalculation(null);
+      }
+      
+      setError(null);
+    } catch (err) {
+      console.error("Calculation error:", err);
+      setError("Error in calculation. Please check your inputs.");
+      setCalculation(null);
+    }
+  }, [availableOdds, availableLiquidity]);
 
-  // Handle max bet size change
-  const handleMaxBetSizeChange = (value: string) => {
-    const parsedValue = parseFloat(value) || 0;
-    setMaxBetSize(parsedValue);
+  // Format money for display
+  const formatMoney = (value: number | undefined | null) => {
+    if (value === undefined || value === null) return "$0";
+    return "$" + value.toFixed(2).replace(/\d(?=(\d{3})+\.)/g, '$&,');
   };
 
   return (
     <div className="p-6">
       <h1 className="text-2xl font-bold mb-2">Sharp Bettor Copier Calculator</h1>
       <p className="text-gray-600 mb-6">Find and copy the wagers made by sharp bettors on betting exchanges</p>
+      
+      {/* Settings Toggle Button */}
+      <div className="flex justify-end mb-4">
+        <button
+          onClick={() => setShowSettings(!showSettings)}
+          className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md flex items-center gap-2 hover:bg-gray-300"
+        >
+          <span>{showSettings ? "Hide Settings" : "Show Settings"}</span>
+          <span>{showSettings ? "▲" : "▼"}</span>
+        </button>
+      </div>
+      
+      {/* Settings Panel - Only visible when showSettings is true */}
+      {showSettings && (
+        <div className="bg-white p-6 rounded-lg shadow mb-6 border-l-4 border-blue-500">
+          <h2 className="text-xl font-semibold mb-4">Calculator Settings</h2>
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <h3 className="font-medium mb-2">Betting Rules</h3>
+            <ul className="list-disc pl-5 space-y-1 text-sm text-gray-700">
+              <li>For sharp payouts <strong>under $750</strong>: Use OddsJam minimum bet ($5)</li>
+              <li>For sharp payouts <strong>between $750 and $2,000</strong>: Skip these bets (gray area)</li>
+              <li>For sharp payouts <strong>over $2,000</strong>: Bet $10 per $2,000 in payout</li>
+            </ul>
+          </div>
+        </div>
+      )}
       
       <div className="bg-white p-6 rounded-lg shadow mb-6">
         <h2 className="text-xl font-semibold mb-4">Betting Market Information</h2>
@@ -209,53 +168,6 @@ export default function ExchangeCalculator() {
         </div>
       </div>
       
-      <div className="bg-white p-6 rounded-lg shadow mb-6">
-        <h2 className="text-xl font-semibold mb-4">Your Betting Parameters</h2>
-        
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Bet Size per $200 of Sharp Payout ($)
-            </label>
-            <div className="flex items-center">
-              <span className="mr-2">$</span>
-              <input
-                type="number"
-                value={payoutScaleFactor * 200}
-                onChange={(e) => handlePayoutScaleChange(e.target.value)}
-                className="w-full p-3 border rounded-md"
-                placeholder="Enter amount"
-                step="0.1"
-                min="0.1"
-              />
-            </div>
-            <p className="text-sm text-gray-500 mt-1">
-              Default: $1 per $200 of sharp's potential payout
-            </p>
-          </div>
-          
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Maximum Bet Size ($)
-            </label>
-            <div className="flex items-center">
-              <span className="mr-2">$</span>
-              <input
-                type="number"
-                value={maxBetSize}
-                onChange={(e) => handleMaxBetSizeChange(e.target.value)}
-                className="w-full p-3 border rounded-md"
-                placeholder="Enter maximum bet"
-                min="0"
-              />
-            </div>
-            <p className="text-sm text-gray-500 mt-1">
-              Your maximum bet regardless of calculation
-            </p>
-          </div>
-        </div>
-      </div>
-      
       {error && (
         <div className="bg-red-50 border border-red-200 text-red-800 p-4 rounded-lg mb-6">
           {error}
@@ -278,7 +190,7 @@ export default function ExchangeCalculator() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Available Liquidity:</span>
-                  <span className="font-medium">${calculation.availableLiquidity.toFixed(2)}</span>
+                  <span className="font-medium">{formatMoney(calculation.availableLiquidity)}</span>
                 </div>
               </div>
             </div>
@@ -294,11 +206,11 @@ export default function ExchangeCalculator() {
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Sharp's Stake:</span>
-                  <span className="font-medium">${calculation.sharpStake.toFixed(2)}</span>
+                  <span className="font-medium">{formatMoney(calculation.sharpStake)}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Sharp's Potential Payout:</span>
-                  <span className="font-medium">${calculation.sharpPayout.toFixed(2)}</span>
+                  <span className="font-medium">{formatMoney(calculation.sharpPayout)}</span>
                 </div>
               </div>
             </div>
@@ -310,132 +222,166 @@ export default function ExchangeCalculator() {
               <div className="p-3 bg-white rounded-lg shadow">
                 <div className="text-gray-600 text-sm">Your Bet Size</div>
                 <div className="text-2xl font-bold text-green-700">
-                  ${calculation.recommendedStake.toFixed(2)}
+                  {calculation.recommendedStake > 0 
+                    ? formatMoney(calculation.recommendedStake)
+                    : "No Bet"}
                 </div>
                 <div className="text-xs text-gray-500 mt-1">
-                  at odds of {calculation.sharpOdds > 0 ? `+${calculation.sharpOdds}` : calculation.sharpOdds}
+                  {calculation.recommendedStake > 0 
+                    ? `at odds of ${calculation.sharpOdds > 0 ? `+${calculation.sharpOdds}` : calculation.sharpOdds}`
+                    : `${calculation.recommendation}`}
                 </div>
               </div>
               
               <div className="p-3 bg-white rounded-lg shadow">
-                <div className="text-gray-600 text-sm">Potential Profit</div>
-                <div className="text-2xl font-bold text-blue-700">
-                  ${calculation.potentialProfit.toFixed(2)}
+                <div className="text-gray-600 text-sm">
+                  {calculation.recommendedStake > 0 ? "Potential Profit" : "Decision Rule"}
+                </div>
+                <div className={`text-2xl font-bold ${calculation.recommendedStake > 0 ? "text-blue-700" : "text-yellow-600"}`}>
+                  {calculation.recommendedStake > 0 
+                    ? formatMoney(calculation.potentialProfit)
+                    : `${calculation.recommendation}`}
                 </div>
                 <div className="text-xs text-gray-500 mt-1">
-                  if your bet wins
+                  {calculation.recommendedStake > 0 
+                    ? "if your bet wins"
+                    : calculation.recommendation === "Skip - Gray Area" 
+                      ? "Payout between $750-$2000"
+                      : "Following optimal strategy"}
                 </div>
               </div>
               
               <div className="p-3 bg-white rounded-lg shadow">
-                <div className="text-gray-600 text-sm">Scale Used</div>
-                <div className="text-2xl font-bold text-purple-700">
-                  ${calculation.payoutRatio.toFixed(2)}
+                <div className="text-gray-600 text-sm">Sharp's Payout</div>
+                <div className={`text-2xl font-bold ${
+                  calculation.sharpPayout < 750 
+                    ? "text-red-600" 
+                    : calculation.sharpPayout <= 2000 
+                      ? "text-yellow-600" 
+                      : "text-green-700"
+                }`}>
+                  {formatMoney(calculation.sharpPayout)}
                 </div>
                 <div className="text-xs text-gray-500 mt-1">
-                  per $1,000 of sharp payout
+                  {calculation.sharpPayout < 750 
+                    ? "Low confidence" 
+                    : calculation.sharpPayout <= 2000 
+                      ? "Medium confidence" 
+                      : "High confidence"}
                 </div>
+              </div>
+            </div>
+            
+            {/* Recommendation */}
+            <div className={`mt-4 p-3 rounded-lg border ${
+              calculation.recommendedStake === 0 
+                ? "bg-yellow-50 border-yellow-200 text-yellow-800" 
+                : "bg-green-50 border-green-200 text-green-800"
+            }`}>
+              <div className="font-medium mb-1">
+                {calculation.recommendation === "Skip - Gray Area" 
+                  ? "⚠️ Skip This Bet" 
+                  : calculation.recommendation === "OddsJam Minimum" 
+                    ? "ℹ️ Use OddsJam Minimum" 
+                    : "✅ Copy Sharp Bettor"}
+              </div>
+              <div className="text-sm">
+                {calculation.recommendation === "Skip - Gray Area" 
+                  ? "This bet falls in the gray area (payout between $750-$2000). Skip this bet based on our optimized strategy." 
+                  : calculation.recommendation === "OddsJam Minimum" 
+                    ? "Sharp payout is below $750. Recommend using the OddsJam minimum bet of $5."
+                    : `Sharp has high confidence (payout over $2,000). Bet ${formatMoney(calculation.recommendedStake)} at ${calculation.sharpOdds > 0 ? "+" : ""}${calculation.sharpOdds}.`}
               </div>
             </div>
           </div>
           
-          {/* Visual representation */}
+          {/* Confidence Level Indicator */}
           <div className="mt-6 p-4 bg-gray-50 rounded-lg">
-            <h3 className="font-medium mb-4">Sharp Payout vs Your Stake</h3>
-            <div className="h-8 bg-gray-200 rounded-lg flex overflow-hidden mb-2 relative">
-              {/* Sharp's payout bar */}
-              <div 
-                className="bg-blue-500 h-full flex-grow"
-                style={{ width: '100%' }}
-              >
-                <div className="absolute inset-0 flex items-center justify-center text-white font-medium">
-                  Sharp's Payout: ${Math.round(calculation.sharpPayout)}
-                </div>
-              </div>
-            </div>
-            
+            <h3 className="font-medium mb-4">Confidence Level Indicator</h3>
             <div className="h-8 bg-gray-200 rounded-lg flex overflow-hidden relative">
-              {/* Your stake bar */}
+              {/* Confidence level bar */}
               <div 
-                className="bg-green-500 h-full"
-                style={{ width: `${(calculation.recommendedStake / calculation.sharpPayout) * 100}%` }}
+                className={`h-full ${
+                  calculation.sharpPayout < 750 
+                    ? "bg-red-500" 
+                    : calculation.sharpPayout <= 2000 
+                      ? "bg-yellow-500" 
+                      : "bg-green-500"
+                }`}
+                style={{ width: `${Math.min((calculation.sharpPayout / 5000) * 100, 100)}%` }}
               >
-                <div className="absolute inset-0 flex items-center px-2 text-white font-medium text-sm">
-                  Your Stake: ${calculation.recommendedStake.toFixed(2)}
+              </div>
+              
+              {/* Threshold markers */}
+              <div className="absolute inset-0 flex items-center">
+                <div className="w-full px-4 flex justify-between text-xs text-white font-bold">
+                  <span>$0</span>
+                  <span className="relative">
+                    $750
+                    <div className="absolute h-8 w-px bg-white opacity-50 top-0 transform -translate-x-1/2 -translate-y-3"></div>
+                  </span>
+                  <span className="relative">
+                    $2,000
+                    <div className="absolute h-8 w-px bg-white opacity-50 top-0 transform -translate-x-1/2 -translate-y-3"></div>
+                  </span>
+                  <span>$5,000+</span>
                 </div>
               </div>
             </div>
             
-            <p className="text-sm text-gray-600 mt-2">
-              Scale: ${(payoutScaleFactor * 200).toFixed(2)} per $200 of sharp payout
-              ({(payoutScaleFactor * 100).toFixed(2)}%)
-            </p>
-          </div>
-          
-          <div className="mt-6 p-4 bg-yellow-50 rounded-lg">
-            <h3 className="font-medium mb-2">Explanation</h3>
-            <p className="text-gray-700">
-              Based on the available liquidity of <strong>${calculation.availableLiquidity.toFixed(2)}</strong> at odds of{" "}
-              <strong>{calculation.availableOdds > 0 ? `+${calculation.availableOdds}` : calculation.availableOdds}</strong>,
-              we've calculated that a sharp bettor likely placed{" "}
-              <strong>${calculation.sharpStake.toFixed(2)}</strong> at odds of{" "}
-              <strong>{calculation.sharpOdds > 0 ? `+${calculation.sharpOdds}` : calculation.sharpOdds}</strong>.
-            </p>
-            <p className="text-gray-700 mt-2">
-              <strong>You will copy the sharp's bet</strong>, taking the same side at the same odds of{" "}
-              <strong>{calculation.sharpOdds > 0 ? `+${calculation.sharpOdds}` : calculation.sharpOdds}</strong>.
-              Their potential payout would be <strong>${calculation.sharpPayout.toFixed(2)}</strong> if they win.
-            </p>
-            <p className="text-gray-700 mt-2">
-              Based on your settings, we recommend betting <strong>${calculation.recommendedStake.toFixed(2)}</strong>,
-              which is <strong>${calculation.payoutRatio.toFixed(2)}</strong> per $1,000 of sharp payout.
-              Your potential profit if this bet wins will be <strong>${calculation.potentialProfit.toFixed(2)}</strong>.
-            </p>
+            <div className="flex justify-between mt-2 text-xs">
+              <div className="text-red-700">Skip / Minimum</div>
+              <div className="text-yellow-700">Gray Area - Skip</div>
+              <div className="text-green-700">Strong Sharp Signal</div>
+            </div>
+            
+            <div className="mt-4 text-center">
+              <div className="text-sm font-medium">Sharp's Potential Payout</div>
+              <div className="text-lg font-bold">{formatMoney(calculation.sharpPayout)}</div>
+            </div>
           </div>
         </div>
       )}
 
+      {/* Explanation section */}
       <div className="bg-white p-6 rounded-lg shadow">
         <h2 className="text-xl font-semibold mb-4">How This Calculator Works</h2>
         
         <div className="space-y-4 text-gray-700">
           <p>
-            The Sharp Exposure Calculator helps you find and copy sharp bettors on betting exchanges.
-            When you see available liquidity, that amount is there because a sharp bettor has placed
-            a bet on the opposite side.
+            The Sharp Bettor Copier Calculator helps you find and copy sharp bettors on betting exchanges 
+            based on optimal bankroll management rules. The calculator examines available liquidity to 
+            identify sharp bettor positions and applies strategic filtering rules.
           </p>
           
           <div className="p-4 bg-blue-50 rounded-lg">
-            <h3 className="font-medium mb-2">Example</h3>
-            <p>
-              If you see $1,000 available to be bet at +200 odds on an exchange, this means that
-              a sharp bettor has placed $2,000 at -200 odds. Your strategy is to copy this sharp
-              bettor by placing a bet at the same -200 odds, scaled appropriately for your bankroll.
-            </p>
-            <p className="mt-2">
-              The sharp's potential payout if they win would be $3,000 (their $2,000 stake + $1,000 profit).
-              Using the default setting of $1 per $200 of sharp payout, you would bet $15 (for $3,000 ÷ 200 = $15)
-              on the same side as the sharp (-200 odds).
-            </p>
+            <h3 className="font-medium mb-2">Optimized Betting Rules</h3>
+            <ul className="list-disc pl-5 space-y-1">
+              <li><strong>For sharp payouts under $750</strong>: Use OddsJam minimum bet of $5 (low confidence)</li>
+              <li><strong>For sharp payouts between $750-$2,000</strong>: Skip these bets (gray area)</li>
+              <li><strong>For sharp payouts over $2,000</strong>: Bet $10 per $2,000 in payout (high confidence signal)</li>
+            </ul>
           </div>
           
           <p>
-            <strong>Copying Sharp Bettors:</strong> This calculator identifies where sharp money is placed
-            on betting exchanges and helps you follow their action with an appropriately sized bet for your bankroll.
+            <strong>Example:</strong> If you see $1,000 available to bet at +200 odds, a sharp has placed
+            $2,000 at -200 odds with a potential payout of $3,000. Since this exceeds the $2,000 threshold,
+            the calculator recommends betting $15 (for $3,000 ÷ $2,000 × $10) on the same side as the sharp.
           </p>
           
           <p>
-            <strong>Adjusting Your Scale Factor:</strong> If you want to bet more or less
-            aggressively, you can adjust the "Bet Size per $200 of Sharp Payout" setting.
-            The default is $1 per $200, which is equivalent to $5 per $1,000 of sharp payout
-            or $30 per $6,000 of payout.
+            The calculator helps you focus on the most confident sharp plays while avoiding questionable
+            opportunities in the gray area, optimizing your betting strategy based on sharp activity.
           </p>
-          
-          <p>
-            <strong>Maximum Bet Protection:</strong> The maximum bet size setting ensures
-            you never bet more than you're comfortable with, regardless of how large the
-            sharp's position might be.
-          </p>
+        </div>
+        
+        <div className="flex justify-end mt-4">
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="px-4 py-2 bg-gray-200 text-gray-700 rounded-md hover:bg-gray-300"
+          >
+            {showSettings ? "Hide Settings" : "Adjust Settings"}
+          </button>
         </div>
       </div>
     </div>

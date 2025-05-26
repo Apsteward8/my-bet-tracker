@@ -988,3 +988,394 @@ def get_expected_profit():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
+
+@bp.route("/all-bets-history")
+def get_all_bets_history():
+    """
+    Get all bets with calculated metrics (not just positive EV).
+    
+    Query parameters:
+    - include_pending: "true" or "false" (default: "true")
+    - include_player_props: "true" or "false" (default: "true")
+    - start_date: ISO format date string (default: earliest date)
+    - end_date: ISO format date string (default: latest date)
+    """
+    try:
+        # Parse query parameters - different defaults from EV analysis
+        include_pending = request.args.get('include_pending', 'true').lower() == 'true'
+        include_player_props = request.args.get('include_player_props', 'true').lower() == 'true'
+        
+        start_date_str = request.args.get('start_date')
+        end_date_str = request.args.get('end_date')
+        
+        start_date = None
+        end_date = None
+        
+        # Safely parse dates
+        if start_date_str:
+            try:
+                start_date = datetime.fromisoformat(start_date_str)
+            except ValueError:
+                # Invalid date format, ignore this filter
+                pass
+                
+        if end_date_str:
+            try:
+                end_date = datetime.fromisoformat(end_date_str)
+            except ValueError:
+                # Invalid date format, ignore this filter
+                pass
+        
+        # Step 1: Get ALL bets - NOT just positive EV bets
+        # Remove the filter for bet_type == "positive_ev"
+        query = Bet.query
+        
+        # Apply date filters if provided
+        if start_date:
+            query = query.filter(Bet.event_start_date >= start_date)
+        
+        if end_date:
+            # Add 1 day to end_date and use < instead of <= to include the entire end date
+            next_day = end_date + timedelta(days=1)
+            query = query.filter(Bet.event_start_date < next_day)
+        
+        # Filter out future events
+        query = query.filter(Bet.event_start_date <= datetime.now())
+        
+        # Filter out player props if needed
+        if not include_player_props:
+            query = query.filter(~Bet.market_name.ilike('%player%'))
+        
+        # By default, include pending bets unless explicitly excluded
+        if not include_pending:
+            query = query.filter(Bet.status != "pending")
+        
+        # Execute query and get all bets
+        all_bets = query.all()
+        
+        # If no bets match criteria
+        if not all_bets:
+            return jsonify({
+                "bets": [],
+                "stats": None,
+                "message": "No bets found matching your criteria"
+            }), 200
+        
+        # Separate bets with valid CLV for certain calculations
+        valid_clv_bets = []
+        processed_bets = []
+        
+        # Step 2: Process bets with calculated fields
+        for bet in all_bets:
+            # Convert Decimal to float for JSON serialization
+            bet_stake = float(bet.stake) if bet.stake is not None else 0
+            bet_profit = float(bet.bet_profit) if bet.bet_profit is not None else 0
+            
+            # Base processed bet with null values for CLV calculations
+            processed_bet = {
+                "id": bet.id,
+                "event_name": bet.event_name,
+                "bet_name": bet.bet_name,
+                "sportsbook": bet.sportsbook,
+                "sport": bet.sport,
+                "bet_type": bet.bet_type,
+                "odds": bet.odds,
+                "clv": bet.clv,
+                "stake": bet_stake,
+                "status": bet.status,
+                "bet_profit": bet_profit,
+                "event_start_date": bet.event_start_date.isoformat() if bet.event_start_date else None,
+                "market_name": bet.market_name,
+                # Default values for CLV fields
+                "implied_prob": None,
+                "clv_implied_prob": None,
+                "ev_percent": None,
+                "expected_profit": None,
+                "beat_clv": None,
+                "ev_category": "No CLV"
+            }
+            
+            # Only calculate CLV metrics if CLV is valid
+            has_valid_clv = bet.clv is not None and bet.clv != 0
+            
+            if has_valid_clv:
+                # Calculate implied probabilities
+                implied_prob = american_odds_to_implied_prob(bet.odds)
+                clv_implied_prob = american_odds_to_implied_prob(bet.clv)
+                
+                # Only proceed if probabilities are valid
+                if implied_prob and clv_implied_prob:
+                    # Calculate EV metrics
+                    ev_percent = calculate_ev_percent(implied_prob, clv_implied_prob)
+                    expected_profit = bet_stake * ev_percent
+                    
+                    # Determine if bet beat closing line
+                    beat_clv = bet.odds > bet.clv
+                    
+                    # Categorize EV quality
+                    ev_category = categorize_ev(ev_percent)
+                    
+                    # Update processed bet with CLV calculations
+                    processed_bet.update({
+                        "implied_prob": implied_prob,
+                        "clv_implied_prob": clv_implied_prob,
+                        "ev_percent": ev_percent,
+                        "expected_profit": expected_profit,
+                        "beat_clv": beat_clv,
+                        "ev_category": ev_category
+                    })
+                    
+                    # Add to valid CLV bets for specific calculations
+                    valid_clv_bets.append(processed_bet)
+            
+            # Add to all processed bets regardless of CLV
+            processed_bets.append(processed_bet)
+        
+        # Step 3: Calculate summary statistics
+        
+        # Use all processed bets for general stats
+        total_bets = len(processed_bets)
+        
+        # Get different subsets of bets
+        settled_bets = [bet for bet in processed_bets if bet["status"] not in ["pending"]]
+        winning_bets = [bet for bet in settled_bets if bet["status"] == "won"]
+        losing_bets = [bet for bet in settled_bets if bet["status"] == "lost"]
+        pending_bets = [bet for bet in processed_bets if bet["status"] == "pending"]
+        push_bets = [bet for bet in processed_bets if bet["status"] == "push"]
+        void_bets = [bet for bet in processed_bets if bet["status"] == "void"]
+        
+        # Analysis bets - all bets by default
+        analyze_bets = processed_bets
+        
+        # Calculate key metrics using all bets
+        total_stake = sum(bet["stake"] for bet in analyze_bets)
+        total_profit = sum(bet["bet_profit"] for bet in analyze_bets)
+        roi = (total_profit / total_stake) * 100 if total_stake > 0 else 0
+        
+        # Calculate win rates using settled bets (excluding pending, push, void)
+        decisive_bets = winning_bets + losing_bets
+        win_rate = (len(winning_bets) / len(decisive_bets)) * 100 if decisive_bets else 0
+        
+        # Calculate additional metrics for all bets view
+        avg_odds = sum(bet["odds"] for bet in analyze_bets if bet["odds"]) / len([bet for bet in analyze_bets if bet["odds"]]) if any(bet["odds"] for bet in analyze_bets) else 0
+        avg_stake = total_stake / total_bets if total_bets > 0 else 0
+        
+        # Calculate CLV-specific metrics using only valid CLV bets
+        valid_clv_analyze_bets = valid_clv_bets
+        valid_clv_settled_bets = [bet for bet in valid_clv_bets if bet["status"] not in ["pending"]]
+        
+        expected_profit = sum(bet["expected_profit"] for bet in valid_clv_analyze_bets) if valid_clv_analyze_bets else 0
+        expected_roi = (expected_profit / total_stake) * 100 if total_stake > 0 else 0
+        clv_win_rate = (sum(1 for bet in valid_clv_settled_bets if bet["beat_clv"]) / len(valid_clv_settled_bets)) * 100 if valid_clv_settled_bets else 0
+        avg_ev = sum(bet["ev_percent"] for bet in valid_clv_analyze_bets) / len(valid_clv_analyze_bets) * 100 if valid_clv_analyze_bets else 0
+        
+        # Calculate sportsbook stats - using all bets for general stats
+        sportsbook_stats = {}
+        for bet in analyze_bets:
+            sb = bet["sportsbook"]
+            if sb not in sportsbook_stats:
+                sportsbook_stats[sb] = {
+                    "name": sb,
+                    "bet_count": 0,
+                    "total_stake": 0,
+                    "total_profit": 0,
+                    "expected_profit": 0,
+                    "ev_sum": 0,
+                    "clv_bet_count": 0  # Count bets with valid CLV for averaging
+                }
+            
+            stats = sportsbook_stats[sb]
+            stats["bet_count"] += 1
+            stats["total_stake"] += bet["stake"]
+            stats["total_profit"] += bet["bet_profit"]
+            
+            # Only include expected profit and EV if bet has valid CLV
+            if bet["ev_percent"] is not None:
+                stats["expected_profit"] += bet["expected_profit"]
+                stats["ev_sum"] += bet["ev_percent"]
+                stats["clv_bet_count"] += 1
+        
+        # Calculate derived metrics for sportsbooks
+        for sb in sportsbook_stats:
+            stats = sportsbook_stats[sb]
+            stats["roi"] = (stats["total_profit"] / stats["total_stake"]) * 100 if stats["total_stake"] > 0 else 0
+            stats["expected_roi"] = (stats["expected_profit"] / stats["total_stake"]) * 100 if stats["total_stake"] > 0 else 0
+            stats["avg_ev"] = (stats["ev_sum"] / stats["clv_bet_count"] * 100) if stats["clv_bet_count"] > 0 else 0
+            # Remove temporary fields
+            del stats["ev_sum"]
+            del stats["clv_bet_count"]
+        
+        # Convert dict to list and sort by profit
+        sportsbook_stats_list = list(sportsbook_stats.values())
+        sportsbook_stats_list.sort(key=lambda x: x["total_profit"], reverse=True)
+        
+        # Calculate sport stats if available - similar approach
+        sport_stats_list = []
+        if any("sport" in bet and bet["sport"] for bet in analyze_bets):
+            sport_stats = {}
+            for bet in analyze_bets:
+                sport = bet["sport"]
+                if not sport:
+                    continue
+                    
+                if sport not in sport_stats:
+                    sport_stats[sport] = {
+                        "name": sport,
+                        "bet_count": 0,
+                        "total_stake": 0,
+                        "total_profit": 0,
+                        "expected_profit": 0,
+                        "ev_sum": 0,
+                        "clv_bet_count": 0
+                    }
+                
+                stats = sport_stats[sport]
+                stats["bet_count"] += 1
+                stats["total_stake"] += bet["stake"]
+                stats["total_profit"] += bet["bet_profit"]
+                
+                # Only include expected profit and EV if bet has valid CLV
+                if bet["ev_percent"] is not None:
+                    stats["expected_profit"] += bet["expected_profit"]
+                    stats["ev_sum"] += bet["ev_percent"]
+                    stats["clv_bet_count"] += 1
+            
+            # Calculate derived metrics for sports
+            for sport in sport_stats:
+                stats = sport_stats[sport]
+                stats["roi"] = (stats["total_profit"] / stats["total_stake"]) * 100 if stats["total_stake"] > 0 else 0
+                stats["expected_roi"] = (stats["expected_profit"] / stats["total_stake"]) * 100 if stats["total_stake"] > 0 else 0
+                stats["avg_ev"] = (stats["ev_sum"] / stats["clv_bet_count"] * 100) if stats["clv_bet_count"] > 0 else 0
+                # Remove temporary fields
+                del stats["ev_sum"]
+                del stats["clv_bet_count"]
+            
+            # Convert dict to list and sort by profit
+            sport_stats_list = list(sport_stats.values())
+            sport_stats_list.sort(key=lambda x: x["total_profit"], reverse=True)
+        
+        # Calculate status stats - NEW for all bets view
+        status_stats = {}
+        for bet in analyze_bets:
+            status = bet["status"]
+            if status not in status_stats:
+                status_stats[status] = {
+                    "status": status,
+                    "bet_count": 0,
+                    "total_stake": 0,
+                    "total_profit": 0,
+                    "expected_profit": 0,
+                    "ev_sum": 0,
+                    "clv_bet_count": 0
+                }
+            
+            stats = status_stats[status]
+            stats["bet_count"] += 1
+            stats["total_stake"] += bet["stake"]
+            stats["total_profit"] += bet["bet_profit"]
+            
+            # Only include expected profit and EV if bet has valid CLV
+            if bet["ev_percent"] is not None:
+                stats["expected_profit"] += bet["expected_profit"]
+                stats["ev_sum"] += bet["ev_percent"]
+                stats["clv_bet_count"] += 1
+        
+        # Calculate derived metrics for status
+        for status in status_stats:
+            stats = status_stats[status]
+            stats["roi"] = (stats["total_profit"] / stats["total_stake"]) * 100 if stats["total_stake"] > 0 else 0
+            stats["expected_roi"] = (stats["expected_profit"] / stats["total_stake"]) * 100 if stats["total_stake"] > 0 else 0
+            stats["avg_ev"] = (stats["ev_sum"] / stats["clv_bet_count"] * 100) if stats["clv_bet_count"] > 0 else 0
+            # Remove temporary fields
+            del stats["ev_sum"]
+            del stats["clv_bet_count"]
+        
+        # Convert dict to list and sort by bet count
+        status_stats_list = list(status_stats.values())
+        status_stats_list.sort(key=lambda x: x["bet_count"], reverse=True)
+        
+        # Calculate EV quality stats - only for valid CLV bets
+        ev_categories = ["High EV", "Medium EV", "Low EV", "No CLV"]
+        ev_quality_stats = {category: {
+            "category": category,
+            "bet_count": 0,
+            "total_stake": 0,
+            "total_profit": 0,
+            "expected_profit": 0,
+            "ev_sum": 0,
+            "clv_bet_count": 0
+        } for category in ev_categories}
+        
+        for bet in analyze_bets:
+            category = bet["ev_category"]
+            if category not in ev_quality_stats:
+                continue
+                
+            stats = ev_quality_stats[category]
+            stats["bet_count"] += 1
+            stats["total_stake"] += bet["stake"]
+            stats["total_profit"] += bet["bet_profit"]
+            
+            # Only include expected profit and EV if bet has valid CLV
+            if bet["ev_percent"] is not None:
+                stats["expected_profit"] += bet["expected_profit"]
+                stats["ev_sum"] += bet["ev_percent"]
+                stats["clv_bet_count"] += 1
+        
+        # Calculate derived metrics for EV categories
+        for category in ev_quality_stats:
+            stats = ev_quality_stats[category]
+            if stats["bet_count"] > 0:
+                stats["roi"] = (stats["total_profit"] / stats["total_stake"]) * 100 if stats["total_stake"] > 0 else 0
+                stats["expected_roi"] = (stats["expected_profit"] / stats["total_stake"]) * 100 if stats["total_stake"] > 0 else 0
+                stats["avg_ev"] = (stats["ev_sum"] / stats["clv_bet_count"] * 100) if stats["clv_bet_count"] > 0 else 0
+                # Remove temporary fields
+                del stats["ev_sum"]
+                del stats["clv_bet_count"]
+            else:
+                stats["roi"] = 0
+                stats["expected_roi"] = 0
+                stats["avg_ev"] = 0
+                # Remove temporary fields
+                del stats["ev_sum"]
+                del stats["clv_bet_count"]
+        
+        # Convert dict to list with custom order
+        ev_quality_stats_list = [ev_quality_stats[cat] for cat in ["High EV", "Medium EV", "Low EV", "No CLV"] if cat in ev_quality_stats]
+        
+        # Construct response - enhanced with additional fields for all bets view
+        response = {
+            "bets": processed_bets,
+            "stats": {
+                "total_bets": total_bets,
+                "winning_bets": len(winning_bets),
+                "losing_bets": len(losing_bets),
+                "pending_bets": len(pending_bets),
+                "push_bets": len(push_bets),  # NEW
+                "void_bets": len(void_bets),  # NEW
+                "total_stake": total_stake,
+                "total_profit": total_profit,
+                "expected_profit": expected_profit,
+                "roi": roi,
+                "expected_roi": expected_roi,
+                "win_rate": win_rate,
+                "clv_win_rate": clv_win_rate,
+                "avg_ev": avg_ev,
+                "avg_odds": avg_odds,  # NEW
+                "avg_stake": avg_stake,  # NEW
+                "valid_clv_bets": len(valid_clv_analyze_bets),
+                "total_analyzed_bets": len(analyze_bets)
+            },
+            "sportsbook_stats": sportsbook_stats_list,
+            "sport_stats": sport_stats_list,
+            "status_stats": status_stats_list,  # NEW
+            "ev_quality_stats": ev_quality_stats_list
+        }
+        
+        return jsonify(response), 200
+        
+    except Exception as e:
+        print(f"Error in all bets history: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500

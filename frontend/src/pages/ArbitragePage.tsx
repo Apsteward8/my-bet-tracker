@@ -1,3 +1,4 @@
+// pages/ArbitragePage.tsx (with responsive updates)
 import { useState, useEffect } from "react";
 
 interface OddsInput {
@@ -95,16 +96,16 @@ export default function ArbitragePage() {
   }
 
   return (
-    <div className="p-6">
-      <h1 className="text-2xl font-bold mb-6">Arbitrage Calculator</h1>
+    <div className="py-4 lg:p-6">
+      <h1 className="text-xl lg:text-2xl font-bold mb-4 lg:mb-6">Arbitrage Calculator</h1>
       
-      <div className="bg-white p-6 rounded-lg shadow mb-6">
-        <h2 className="text-xl font-semibold mb-4">Betting Odds</h2>
+      <div className="bg-white p-4 lg:p-6 rounded-lg shadow mb-4 lg:mb-6">
+        <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">Betting Odds</h2>
         
         <div className="space-y-4">
           {inputs.map((input, index) => (
-            <div key={index} className="flex space-x-4 items-center">
-              <div className="w-1/3">
+            <div key={index} className="flex flex-col md:flex-row md:space-x-4 space-y-2 md:space-y-0 md:items-center">
+              <div className="w-full md:w-1/3">
                 <input
                   type="text"
                   value={input.sportsbook}
@@ -113,7 +114,7 @@ export default function ArbitragePage() {
                   placeholder="Sportsbook name"
                 />
               </div>
-              <div className="w-1/3">
+              <div className="w-full md:w-1/3">
                 <input
                   type="number"
                   value={input.odds === 0 ? "" : input.odds}
@@ -125,7 +126,7 @@ export default function ArbitragePage() {
               {inputs.length > 2 && (
                 <button
                   onClick={() => removeSportsbook(index)}
-                  className="text-red-600 hover:text-red-800"
+                  className="text-red-600 hover:text-red-800 md:ml-auto"
                 >
                   Remove
                 </button>
@@ -135,30 +136,30 @@ export default function ArbitragePage() {
           
           <button
             onClick={addSportsbook}
-            className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
+            className="mt-2 px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 w-full md:w-auto"
           >
             Add Another Sportsbook
           </button>
         </div>
       </div>
       
-      <div className="bg-white p-6 rounded-lg shadow mb-6">
-        <h2 className="text-xl font-semibold mb-4">Total Stake</h2>
+      <div className="bg-white p-4 lg:p-6 rounded-lg shadow mb-4 lg:mb-6">
+        <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">Total Stake</h2>
         <div className="flex items-center">
           <span className="mr-2">$</span>
           <input
             type="number"
             value={totalStake}
             onChange={(e) => setTotalStake(parseFloat(e.target.value) || 0)}
-            className="w-40 p-2 border rounded"
+            className="w-full md:w-40 p-2 border rounded"
             min="0"
             step="10"
           />
         </div>
       </div>
       
-      <div className="bg-white p-6 rounded-lg shadow">
-        <h2 className="text-xl font-semibold mb-4">Results</h2>
+      <div className="bg-white p-4 lg:p-6 rounded-lg shadow">
+        <h2 className="text-lg lg:text-xl font-semibold mb-3 lg:mb-4">Results</h2>
         
         {arbitrageExists ? (
           <div className="space-y-4">
