@@ -1,6 +1,6 @@
 # bets.py - Enhanced version with pagination and more endpoints
 from flask import Blueprint, jsonify, request
-from models import Bet, db
+from models import Bet, PikkitBet, db
 from datetime import datetime, timedelta
 from sqlalchemy import func, text
 import math
@@ -9,6 +9,7 @@ import subprocess
 import os
 import sys
 from import_csv import import_bets_from_csv
+from import_pikkit_csv import import_pikkit_bets_from_csv
 
 # Make the import dynamic to avoid circular imports
 def get_import_function():
@@ -1376,6 +1377,544 @@ def get_all_bets_history():
         
     except Exception as e:
         print(f"Error in all bets history: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    
+@bp.route("/pikkit/bets")
+def get_pikkit_bets():
+    """Get Pikkit bets with optional pagination"""
+    try:
+        # Parse query parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        paginate = request.args.get('paginate', 'true').lower() == 'true'
+        status = request.args.get('status')
+        sportsbook = request.args.get('sportsbook')
+        
+        # Build the query
+        query = PikkitBet.query
+        
+        # Apply filters if provided
+        if status:
+            query = query.filter(PikkitBet.status == status)
+        if sportsbook:
+            query = query.filter(PikkitBet.sportsbook == sportsbook)
+        
+        # Order by most recent first
+        query = query.order_by(PikkitBet.time_placed.desc())
+        
+        if paginate:
+            # Return paginated results
+            pagination = query.paginate(page=page, per_page=per_page)
+            
+            return jsonify({
+                "current_page": pagination.page,
+                "pages": pagination.pages,
+                "total": pagination.total,
+                "items": [
+                    {
+                        "id": b.id,
+                        "bet_id": b.bet_id,
+                        "event_name": b.event_name,
+                        "bet_name": b.bet_name,
+                        "sportsbook": b.sportsbook,
+                        "bet_type": b.bet_type,
+                        "odds": float(b.odds) if b.odds else None,
+                        "american_odds": b.american_odds,
+                        "closing_line": float(b.closing_line) if b.closing_line else None,
+                        "american_closing_line": b.american_closing_line,
+                        "clv": b.clv_american,
+                        "stake": float(b.stake) if b.stake else 0,
+                        "status": b.status,
+                        "bet_profit": float(b.bet_profit) if b.bet_profit else 0,
+                        "time_placed": b.time_placed.isoformat() if b.time_placed else None,
+                        "time_settled": b.time_settled.isoformat() if b.time_settled else None,
+                        "sport": b.sport,
+                        "league": b.league,
+                        "confirmed_settlement": b.confirmed_settlement,
+                        "source": "pikkit"
+                    }
+                    for b in pagination.items
+                ]
+            })
+        else:
+            # Return a simple array without pagination
+            bets = query.limit(per_page).all()
+            
+            return jsonify([
+                {
+                    "id": b.id,
+                    "bet_id": b.bet_id,
+                    "event_name": b.event_name,
+                    "bet_name": b.bet_name,
+                    "sportsbook": b.sportsbook,
+                    "bet_type": b.bet_type,
+                    "odds": b.american_odds,  # Use American odds for consistency
+                    "clv": b.clv_american,
+                    "stake": float(b.stake) if b.stake else 0,
+                    "status": b.status,
+                    "bet_profit": float(b.bet_profit) if b.bet_profit else 0,
+                    "time_placed": b.time_placed.isoformat() if b.time_placed else None,
+                    "sport": b.sport,
+                    "league": b.league,
+                    "source": "pikkit"
+                }
+                for b in bets
+            ])
+    
+    except Exception as e:
+        print(f"Error retrieving Pikkit bets: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/pikkit/import", methods=["POST"])
+def import_pikkit_bets():
+    """Import Pikkit bets from uploaded CSV"""
+    try:
+        if 'file' not in request.files:
+            return jsonify({"error": "No file part"}), 400
+            
+        file = request.files['file']
+        if file.filename == '':
+            return jsonify({"error": "No selected file"}), 400
+            
+        if file and file.filename.endswith('.csv'):
+            filename = secure_filename(file.filename)
+            filepath = os.path.join('/tmp', filename)
+            file.save(filepath)
+            
+            # Import the Pikkit bets
+            import_pikkit_bets_from_csv(filepath)
+            
+            # Clean up the temporary file
+            os.remove(filepath)
+            
+            return jsonify({"message": "Pikkit import successful"}), 200
+        else:
+            return jsonify({"error": "Invalid file type. Please upload a CSV file"}), 400
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/pikkit/sync", methods=["POST"])
+def sync_pikkit_bets():
+    """Sync Pikkit bets from default CSV location"""
+    try:
+        # Path to your Pikkit import script
+        script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_pikkit_csv.py")
+        
+        # Check if the script exists
+        if not os.path.exists(script_path):
+            return jsonify({
+                "error": f"Pikkit import script not found at {script_path}"
+            }), 404
+        
+        # Run the script in a separate process
+        result = subprocess.run(
+            [sys.executable, script_path],
+            capture_output=True,
+            text=True
+        )
+        
+        if result.returncode != 0:
+            return jsonify({
+                "error": "Error running Pikkit sync script",
+                "details": result.stderr
+            }), 500
+        
+        # Return success message with any output from the script
+        return jsonify({
+            "message": "Pikkit sync completed successfully!",
+            "details": result.stdout
+        }), 200
+    
+    except Exception as e:
+        # Handle other errors
+        return jsonify({
+            "error": str(e)
+        }), 500
+
+@bp.route("/combined-bets")
+def get_combined_bets():
+    """
+    Get combined bets from both OddsJam and Pikkit sources.
+    Uses sportsbook mapping to determine which source takes priority.
+    """
+    try:
+        # Define which sportsbooks are tracked by which system
+        PIKKIT_SPORTSBOOKS = {
+            'FanDuel', 'DraftKings', 'Draftkings Sportsbook', 'BetMGM', 'Caesars', 
+            'BetRivers', 'WynnBET', 'PointsBet', 'FOX Bet', 'Barstool', 
+            'Hard Rock', 'TwinSpires', 'Novig', 'ProphetX', 'Sporttrade'
+        }
+        
+        # Parse query parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        status = request.args.get('status')
+        sportsbook = request.args.get('sportsbook')
+        
+        print(f"[DEBUG] Combined bets request - page: {page}, per_page: {per_page}, status: {status}, sportsbook: {sportsbook}")
+        
+        combined_bets = []
+        
+        # Get OddsJam bets (exclude Pikkit-tracked sportsbooks)
+        oddsjam_query = Bet.query.filter(~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS))
+        if status:
+            oddsjam_query = oddsjam_query.filter(Bet.status == status)
+        if sportsbook and sportsbook not in PIKKIT_SPORTSBOOKS:
+            oddsjam_query = oddsjam_query.filter(Bet.sportsbook == sportsbook)
+        
+        oddsjam_bets = oddsjam_query.all()
+        print(f"[DEBUG] Found {len(oddsjam_bets)} OddsJam bets")
+        
+        # Convert OddsJam bets to standardized format
+        for bet in oddsjam_bets:
+            combined_bets.append({
+                "id": f"oddsjam_{bet.id}",
+                "original_id": bet.id,
+                "event_name": bet.event_name or "",
+                "bet_name": bet.bet_name or "",
+                "sportsbook": bet.sportsbook or "",
+                "bet_type": bet.bet_type or "",
+                "odds": bet.odds or 0,
+                "clv": bet.clv,
+                "stake": float(bet.stake) if bet.stake else 0,
+                "status": bet.status or "unknown",
+                "bet_profit": float(bet.bet_profit) if bet.bet_profit else 0,
+                "event_start_date": bet.event_start_date.isoformat() if bet.event_start_date else None,
+                "sport": bet.sport,
+                "league": bet.league,
+                "source": "oddsjam",
+                "confirmed_settlement": bet.confirmed_settlement
+            })
+        
+        # Get Pikkit bets (only Pikkit-tracked sportsbooks)
+        pikkit_query = PikkitBet.query.filter(PikkitBet.sportsbook.in_(PIKKIT_SPORTSBOOKS))
+        if status:
+            pikkit_query = pikkit_query.filter(PikkitBet.status == status)
+        if sportsbook and sportsbook in PIKKIT_SPORTSBOOKS:
+            pikkit_query = pikkit_query.filter(PikkitBet.sportsbook == sportsbook)
+        
+        pikkit_bets = pikkit_query.all()
+        print(f"[DEBUG] Found {len(pikkit_bets)} Pikkit bets")
+        
+        # Convert Pikkit bets to standardized format
+        for bet in pikkit_bets:
+            combined_bets.append({
+                "id": f"pikkit_{bet.id}",
+                "original_id": bet.id,
+                "bet_id": bet.bet_id,
+                "event_name": bet.event_name or "",
+                "bet_name": bet.bet_name or "",
+                "sportsbook": bet.sportsbook or "",
+                "bet_type": bet.bet_type or "",
+                "odds": bet.american_odds if bet.american_odds else 0,  # Convert to American odds for consistency
+                "clv": bet.clv_american,
+                "stake": float(bet.stake) if bet.stake else 0,
+                "status": bet.status or "unknown",
+                "bet_profit": float(bet.bet_profit) if bet.bet_profit else 0,
+                "event_start_date": bet.time_placed.isoformat() if bet.time_placed else None,
+                "sport": bet.sport,
+                "league": bet.league,
+                "source": "pikkit",
+                "confirmed_settlement": bet.confirmed_settlement
+            })
+        
+        print(f"[DEBUG] Total combined bets before sorting: {len(combined_bets)}")
+        
+        # Sort combined bets by date (most recent first)
+        # Handle None dates by putting them at the end
+        def sort_key(bet):
+            if bet.get('event_start_date'):
+                try:
+                    return bet['event_start_date']
+                except:
+                    return "1900-01-01T00:00:00"  # Very old date for invalid dates
+            return "1900-01-01T00:00:00"  # Very old date for None dates
+            
+        combined_bets.sort(key=sort_key, reverse=True)
+        
+        # Apply pagination manually
+        total = len(combined_bets)
+        start = (page - 1) * per_page
+        end = start + per_page
+        paginated_bets = combined_bets[start:end]
+        
+        print(f"[DEBUG] Pagination - total: {total}, start: {start}, end: {end}, returned: {len(paginated_bets)}")
+        
+        # Debug: Print first few bets to see what's being returned
+        for i, bet in enumerate(paginated_bets[:3]):
+            print(f"[DEBUG] Bet {i}: {bet['source']} - {bet['sportsbook']} - {bet['event_name'][:50]}...")
+        
+        return jsonify({
+            "current_page": page,
+            "pages": math.ceil(total / per_page) if total > 0 else 1,
+            "total": total,
+            "items": paginated_bets,
+            "sportsbook_sources": {
+                "pikkit": list(PIKKIT_SPORTSBOOKS),
+                "oddsjam": "all_others"
+            },
+            "debug_info": {
+                "oddsjam_count": len(oddsjam_bets),
+                "pikkit_count": len(pikkit_bets),
+                "total_combined": total,
+                "page_info": f"Page {page} of {math.ceil(total / per_page) if total > 0 else 1}"
+            }
+        })
+    
+    except Exception as e:
+        print(f"Error retrieving combined bets: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/sportsbook-mapping")
+def get_sportsbook_mapping():
+    """Get the mapping of which sportsbooks are tracked by which system"""
+    try:
+        PIKKIT_SPORTSBOOKS = {
+            'FanDuel', 'DraftKings', 'BetMGM', 'Caesars', 'BetRivers', 'WynnBET',
+            'PointsBet', 'FOX Bet', 'Barstool', 'Hard Rock', 'TwinSpires',
+            'Novig', 'ProphetX', 'Sporttrade'  # Exchanges
+        }
+        
+        # Get all unique sportsbooks from both systems
+        oddsjam_sportsbooks = set()
+        pikkit_sportsbooks = set()
+        
+        # Query OddsJam sportsbooks
+        oddsjam_result = db.session.query(Bet.sportsbook).distinct().all()
+        oddsjam_sportsbooks = {sb[0] for sb in oddsjam_result if sb[0]}
+        
+        # Query Pikkit sportsbooks
+        pikkit_result = db.session.query(PikkitBet.sportsbook).distinct().all()
+        pikkit_sportsbooks = {sb[0] for sb in pikkit_result if sb[0]}
+        
+        return jsonify({
+            "pikkit_tracked": list(PIKKIT_SPORTSBOOKS),
+            "pikkit_actual": list(pikkit_sportsbooks),
+            "oddsjam_sportsbooks": list(oddsjam_sportsbooks),
+            "overlap": list(oddsjam_sportsbooks.intersection(pikkit_sportsbooks)),
+            "mapping_rules": {
+                "pikkit_priority": list(PIKKIT_SPORTSBOOKS),
+                "oddsjam_priority": "all_others"
+            }
+        })
+    
+    except Exception as e:
+        print(f"Error getting sportsbook mapping: {str(e)}")
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/pikkit/stats")
+def get_pikkit_stats():
+    """Get Pikkit bet statistics"""
+    try:
+        # Get total counts
+        total_bets = PikkitBet.query.count()
+        winning_bets = PikkitBet.query.filter(PikkitBet.status == 'won').count()
+        losing_bets = PikkitBet.query.filter(PikkitBet.status == 'lost').count()
+        pending_bets = PikkitBet.query.filter(PikkitBet.status == 'pending').count()
+        
+        # Calculate profit stats
+        total_profit = db.session.query(func.sum(PikkitBet.bet_profit)).scalar() or 0
+        total_stake = db.session.query(func.sum(PikkitBet.stake)).scalar() or 0
+        roi = (total_profit / total_stake * 100) if total_stake > 0 else 0
+        
+        # Win rate
+        settled_bets = winning_bets + losing_bets
+        win_rate = (winning_bets / settled_bets * 100) if settled_bets > 0 else 0
+        
+        # Average EV
+        avg_ev = db.session.query(func.avg(PikkitBet.ev)).scalar() or 0
+        
+        # Sportsbook breakdown
+        sportsbook_query = db.session.query(
+            PikkitBet.sportsbook,
+            func.count(PikkitBet.id),
+            func.sum(PikkitBet.bet_profit)
+        ).group_by(PikkitBet.sportsbook).all()
+        
+        sportsbooks = [
+            {
+                "name": name,
+                "count": count,
+                "profit": float(profit) if profit else 0
+            }
+            for name, count, profit in sportsbook_query
+        ]
+        
+        return jsonify({
+            "total_bets": total_bets,
+            "winning_bets": winning_bets,
+            "losing_bets": losing_bets,
+            "pending_bets": pending_bets,
+            "win_rate": win_rate,
+            "total_profit": float(total_profit),
+            "total_stake": float(total_stake),
+            "roi": roi,
+            "avg_ev": float(avg_ev),
+            "sportsbooks": sportsbooks,
+            "source": "pikkit"
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/combined-stats")
+def get_combined_stats():
+    """Get combined statistics from both OddsJam and Pikkit"""
+    try:
+        PIKKIT_SPORTSBOOKS = {
+            'FanDuel', 'DraftKings', 'BetMGM', 'Caesars', 'BetRivers', 'WynnBET',
+            'PointsBet', 'FOX Bet', 'Barstool', 'Hard Rock', 'TwinSpires',
+            'Novig', 'ProphetX', 'Sporttrade'
+        }
+        
+        # OddsJam stats (excluding Pikkit-tracked sportsbooks)
+        oddsjam_total = Bet.query.filter(~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS)).count()
+        oddsjam_winning = Bet.query.filter(
+            ~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS),
+            Bet.status == 'won'
+        ).count()
+        oddsjam_losing = Bet.query.filter(
+            ~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS),
+            Bet.status == 'lost'
+        ).count()
+        oddsjam_pending = Bet.query.filter(
+            ~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS),
+            Bet.status == 'pending'
+        ).count()
+        
+        oddsjam_profit = db.session.query(
+            func.sum(Bet.bet_profit)
+        ).filter(~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS)).scalar() or 0
+        
+        oddsjam_stake = db.session.query(
+            func.sum(Bet.stake)
+        ).filter(~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS)).scalar() or 0
+        
+        # Pikkit stats
+        pikkit_total = PikkitBet.query.count()
+        pikkit_winning = PikkitBet.query.filter(PikkitBet.status == 'won').count()
+        pikkit_losing = PikkitBet.query.filter(PikkitBet.status == 'lost').count()
+        pikkit_pending = PikkitBet.query.filter(PikkitBet.status == 'pending').count()
+        
+        pikkit_profit = db.session.query(func.sum(PikkitBet.bet_profit)).scalar() or 0
+        pikkit_stake = db.session.query(func.sum(PikkitBet.stake)).scalar() or 0
+        
+        # Combined totals
+        total_bets = oddsjam_total + pikkit_total
+        total_winning = oddsjam_winning + pikkit_winning
+        total_losing = oddsjam_losing + pikkit_losing
+        total_pending = oddsjam_pending + pikkit_pending
+        total_profit = float(oddsjam_profit) + float(pikkit_profit)
+        total_stake = float(oddsjam_stake) + float(pikkit_stake)
+        
+        # Calculate combined metrics
+        roi = (total_profit / total_stake * 100) if total_stake > 0 else 0
+        win_rate = (total_winning / (total_winning + total_losing) * 100) if (total_winning + total_losing) > 0 else 0
+        
+        return jsonify({
+            "combined": {
+                "total_bets": total_bets,
+                "winning_bets": total_winning,
+                "losing_bets": total_losing,
+                "pending_bets": total_pending,
+                "win_rate": win_rate,
+                "total_profit": total_profit,
+                "total_stake": total_stake,
+                "roi": roi
+            },
+            "breakdown": {
+                "oddsjam": {
+                    "total_bets": oddsjam_total,
+                    "winning_bets": oddsjam_winning,
+                    "losing_bets": oddsjam_losing,
+                    "pending_bets": oddsjam_pending,
+                    "total_profit": float(oddsjam_profit),
+                    "total_stake": float(oddsjam_stake),
+                    "roi": (float(oddsjam_profit) / float(oddsjam_stake) * 100) if oddsjam_stake > 0 else 0
+                },
+                "pikkit": {
+                    "total_bets": pikkit_total,
+                    "winning_bets": pikkit_winning,
+                    "losing_bets": pikkit_losing,
+                    "pending_bets": pikkit_pending,
+                    "total_profit": float(pikkit_profit),
+                    "total_stake": float(pikkit_stake),
+                    "roi": (float(pikkit_profit) / float(pikkit_stake) * 100) if pikkit_stake > 0 else 0
+                }
+            }
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@bp.route("/debug/data-sources")
+def debug_data_sources():
+    """Debug endpoint to check what data we have in each source"""
+    try:
+        PIKKIT_SPORTSBOOKS = {
+            'FanDuel', 'DraftKings', 'Draftkings Sportsbook', 'BetMGM', 'Caesars', 
+            'BetRivers', 'WynnBET', 'PointsBet', 'FOX Bet', 'Barstool', 
+            'Hard Rock', 'TwinSpires', 'Novig', 'ProphetX', 'Sporttrade'
+        }
+        
+        # Check OddsJam data
+        oddsjam_total = Bet.query.count()
+        oddsjam_sportsbooks = db.session.query(Bet.sportsbook, func.count(Bet.id)).group_by(Bet.sportsbook).all()
+        oddsjam_recent = Bet.query.order_by(Bet.event_start_date.desc()).limit(5).all()
+        
+        # Check Pikkit data
+        pikkit_total = PikkitBet.query.count()
+        pikkit_sportsbooks = db.session.query(PikkitBet.sportsbook, func.count(PikkitBet.id)).group_by(PikkitBet.sportsbook).all()
+        pikkit_recent = PikkitBet.query.order_by(PikkitBet.time_placed.desc()).limit(5).all()
+        
+        # Check for overlap
+        oddsjam_sb_set = set([sb[0] for sb in oddsjam_sportsbooks])
+        pikkit_sb_set = set([sb[0] for sb in pikkit_sportsbooks])
+        overlap = oddsjam_sb_set.intersection(pikkit_sb_set)
+        
+        return jsonify({
+            "oddsjam": {
+                "total_bets": oddsjam_total,
+                "sportsbooks": dict(oddsjam_sportsbooks),
+                "recent_bets": [
+                    {
+                        "id": bet.id,
+                        "sportsbook": bet.sportsbook,
+                        "event_name": bet.event_name[:50] if bet.event_name else "",
+                        "date": bet.event_start_date.isoformat() if bet.event_start_date else None
+                    }
+                    for bet in oddsjam_recent
+                ]
+            },
+            "pikkit": {
+                "total_bets": pikkit_total,
+                "sportsbooks": dict(pikkit_sportsbooks),
+                "recent_bets": [
+                    {
+                        "id": bet.id,
+                        "bet_id": bet.bet_id,
+                        "sportsbook": bet.sportsbook,
+                        "event_name": bet.event_name[:50] if bet.event_name else "",
+                        "date": bet.time_placed.isoformat() if bet.time_placed else None
+                    }
+                    for bet in pikkit_recent
+                ]
+            },
+            "mapping": {
+                "pikkit_configured": list(PIKKIT_SPORTSBOOKS),
+                "overlap_detected": list(overlap),
+                "oddsjam_exclusive": list(oddsjam_sb_set - PIKKIT_SPORTSBOOKS),
+                "pikkit_exclusive": list(pikkit_sb_set.intersection(PIKKIT_SPORTSBOOKS))
+            }
+        })
+        
+    except Exception as e:
+        print(f"Error in debug endpoint: {str(e)}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
