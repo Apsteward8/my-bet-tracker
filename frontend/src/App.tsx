@@ -9,6 +9,7 @@ import EVAnalysisPage from "./pages/EVAnalysisPage";
 import ExpectedProfitPage from "./pages/ExpectedProfitPage";
 import BetHistoryPage from "./pages/BetHistoryPage";
 import CombinedBetHistoryPage from "./pages/CombinedBetHistoryPage";
+import CalculatorsPage from "./pages/CalculatorsPage";
 import ExchangeCalculator from "./pages/ExchangeCalculator";
 import SettingsPage from "./pages/SettingsPage";
 
@@ -38,6 +39,7 @@ function App() {
                 <Route path="/history" element={<BetHistoryPage />} />
                 <Route path="/combined-history" element={<CombinedBetHistoryPage />} />
                 <Route path="/exchange" element={<ExchangeCalculator />} />
+                <Route path="/calculator" element={<CalculatorsPage />} />
                 <Route path="/settings" element={<SettingsPage />} />
               </Routes>
             </div>

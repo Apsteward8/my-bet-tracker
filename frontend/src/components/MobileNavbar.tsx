@@ -11,6 +11,7 @@ const navItems = [
   { name: "Combined History", path: "/combined-history", icon: "📊" }, // Add this
   { name: "History", path: "/history", icon: "📋" },
   { name: "Exchange", path: "/exchange", icon: "🧮" },
+  { name: "Calculators", path: "/calculator", icon: "🔢" },
   { name: "Settings", path: "/settings", icon: "⚙️" },
 ];
 

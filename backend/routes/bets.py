@@ -10,6 +10,8 @@ import os
 import sys
 from import_csv import import_bets_from_csv
 from import_pikkit_csv import import_pikkit_bets_from_csv
+from unified_bet_mapping import UnifiedBetMapper
+
 
 # Make the import dynamic to avoid circular imports
 def get_import_function():
@@ -1917,4 +1919,331 @@ def debug_data_sources():
         print(f"Error in debug endpoint: {str(e)}")
         import traceback
         traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+    
+@bp.route("/unified-bets")
+def get_unified_bets():
+    """
+    Get unified bets from both OddsJam and Pikkit using smart source prioritization.
+    This endpoint uses the UnifiedBetMapper to create consistent data structure.
+    """
+    try:
+        # Parse query parameters
+        page = request.args.get('page', 1, type=int)
+        per_page = request.args.get('per_page', 20, type=int)
+        status = request.args.get('status')
+        sportsbook = request.args.get('sportsbook')
+        source_filter = request.args.get('source')  # 'oddsjam', 'pikkit', or 'all'
+        
+        print(f"[DEBUG] Unified bets request - page: {page}, per_page: {per_page}, status: {status}, sportsbook: {sportsbook}")
+        
+        unified_bets = []
+        mapper = UnifiedBetMapper()
+        
+        # Define precise sportsbook mapping based on your specifications
+        PIKKIT_BOOKS = {
+            'BetMGM', 'Caesars Sportsbook', 'Caesars', 'Draftkings Sportsbook', 'DraftKings',
+            'ESPN BET', 'ESPNBet', 'Fanatics', 'Fanduel Sportsbook', 'FanDuel', 
+            'Fliff', 'Novig', 'Onyx', 'Onyx Odds', 'PrizePicks', 'ProphetX', 
+            'Prophet X', 'Rebet', 'Thrillzz', 'Underdog Fantasy'
+        }
+        
+        ODDSJAM_BOOKS = {
+            'BetNow', 'BetOnline', 'BetUS', 'BookMaker', 'Bovada', 
+            'Everygame', 'MyBookie', 'Sportzino', 'Xbet', 'bet105', 'betwhale'
+        }
+        
+        # Determine which sportsbooks to query from each source
+        if sportsbook and sportsbook != "all":
+            # Specific sportsbook requested - use manual mapping
+            if sportsbook in PIKKIT_BOOKS and (not source_filter or source_filter == 'pikkit'):
+                # Query Pikkit for this sportsbook
+                pikkit_query = PikkitBet.query.filter(PikkitBet.sportsbook == sportsbook)
+                if status:
+                    normalized_status = mapper._normalize_status(status)
+                    # Convert back to Pikkit format for query
+                    pikkit_status_map = {'won': 'SETTLED_WIN', 'lost': 'SETTLED_LOSS', 'pending': 'PENDING'}
+                    pikkit_status = pikkit_status_map.get(normalized_status, status)
+                    pikkit_query = pikkit_query.filter(PikkitBet.status == pikkit_status)
+                
+                pikkit_bets = pikkit_query.all()
+                
+                for bet in pikkit_bets:
+                    unified_bet = mapper.map_pikkit_to_unified({
+                        'id': bet.id,
+                        'bet_id': bet.bet_id,
+                        'sportsbook': bet.sportsbook,
+                        'type': bet.bet_type,
+                        'status': bet.status,
+                        'odds': float(bet.odds) if bet.odds else 0,
+                        'closing_line': float(bet.closing_line) if bet.closing_line else 0,
+                        'amount': float(bet.stake) if bet.stake else 0,
+                        'profit': float(bet.bet_profit) if bet.bet_profit else 0,
+                        'bet_info': bet.bet_info,
+                        'sports': bet.sport,
+                        'leagues': bet.league,
+                        'tags': bet.tags,
+                        'time_placed': bet.time_placed.strftime('%m/%d/%Y %H:%M:%S GMT') if bet.time_placed else None,
+                        'time_settled': bet.time_settled.strftime('%m/%d/%Y %H:%M:%S GMT') if bet.time_settled else None,
+                    })
+                    unified_bets.append(unified_bet)
+                    
+            elif sportsbook in ODDSJAM_BOOKS and (not source_filter or source_filter == 'oddsjam'):
+                # Query OddsJam for this sportsbook
+                oddsjam_query = Bet.query.filter(Bet.sportsbook == sportsbook)
+                if status:
+                    oddsjam_query = oddsjam_query.filter(Bet.status == status)
+                
+                oddsjam_bets = oddsjam_query.all()
+                
+                for bet in oddsjam_bets:
+                    unified_bet = mapper.map_oddsjam_to_unified({
+                        'id': bet.id,
+                        'sportsbook': bet.sportsbook,
+                        'sport': bet.sport,
+                        'league': bet.league,
+                        'event_name': bet.event_name,
+                        'market_name': bet.market_name,
+                        'bet_name': bet.bet_name,
+                        'odds': bet.odds,
+                        'clv': bet.clv,
+                        'stake': float(bet.stake) if bet.stake else 0,
+                        'bet_profit': float(bet.bet_profit) if bet.bet_profit else 0,
+                        'status': bet.status,
+                        'bet_type': bet.bet_type,
+                        'tags': bet.tags,
+                        'created_at': bet.created_at.strftime('%m/%d/%Y, %H:%M EDT') if bet.created_at else None,
+                        'event_start_date': bet.event_start_date.strftime('%m/%d/%Y, %H:%M EDT') if bet.event_start_date else None,
+                        'potential_payout': float(bet.potential_payout) if bet.potential_payout else None,
+                        'is_live_bet': bet.is_live_bet,
+                        'is_free_bet': bet.is_free_bet,
+                        'is_odds_boost': bet.is_odds_boost,
+                    })
+                    unified_bets.append(unified_bet)
+        else:
+            # Get all bets using source prioritization
+            
+            # Get Pikkit bets (for manually specified sportsbooks)
+            if not source_filter or source_filter == 'pikkit':
+                pikkit_query = PikkitBet.query.filter(PikkitBet.sportsbook.in_(PIKKIT_BOOKS))
+                if status:
+                    normalized_status = mapper._normalize_status(status)
+                    pikkit_status_map = {'won': 'SETTLED_WIN', 'lost': 'SETTLED_LOSS', 'pending': 'PENDING'}
+                    pikkit_status = pikkit_status_map.get(normalized_status, status)
+                    pikkit_query = pikkit_query.filter(PikkitBet.status == pikkit_status)
+                
+                pikkit_bets = pikkit_query.all()
+                
+                for bet in pikkit_bets:
+                    unified_bet = mapper.map_pikkit_to_unified({
+                        'id': bet.id,
+                        'bet_id': bet.bet_id,
+                        'sportsbook': bet.sportsbook,
+                        'type': bet.bet_type,
+                        'status': bet.status,
+                        'odds': float(bet.odds) if bet.odds else 0,
+                        'closing_line': float(bet.closing_line) if bet.closing_line else 0,
+                        'amount': float(bet.stake) if bet.stake else 0,
+                        'profit': float(bet.bet_profit) if bet.bet_profit else 0,
+                        'bet_info': bet.bet_info,
+                        'sports': bet.sport,
+                        'leagues': bet.league,
+                        'tags': bet.tags,
+                        'time_placed': bet.time_placed.strftime('%m/%d/%Y %H:%M:%S GMT') if bet.time_placed else None,
+                        'time_settled': bet.time_settled.strftime('%m/%d/%Y %H:%M:%S GMT') if bet.time_settled else None,
+                    })
+                    unified_bets.append(unified_bet)
+            
+            # Get OddsJam bets (for manually specified sportsbooks)
+            if not source_filter or source_filter == 'oddsjam':
+                oddsjam_query = Bet.query.filter(Bet.sportsbook.in_(ODDSJAM_BOOKS))
+                if status:
+                    oddsjam_query = oddsjam_query.filter(Bet.status == status)
+                
+                oddsjam_bets = oddsjam_query.all()
+                
+                for bet in oddsjam_bets:
+                    unified_bet = mapper.map_oddsjam_to_unified({
+                        'id': bet.id,
+                        'sportsbook': bet.sportsbook,
+                        'sport': bet.sport,
+                        'league': bet.league,
+                        'event_name': bet.event_name,
+                        'market_name': bet.market_name,
+                        'bet_name': bet.bet_name,
+                        'odds': bet.odds,
+                        'clv': bet.clv,
+                        'stake': float(bet.stake) if bet.stake else 0,
+                        'bet_profit': float(bet.bet_profit) if bet.bet_profit else 0,
+                        'status': bet.status,
+                        'bet_type': bet.bet_type,
+                        'tags': bet.tags,
+                        'created_at': bet.created_at.strftime('%m/%d/%Y, %H:%M EDT') if bet.created_at else None,
+                        'event_start_date': bet.event_start_date.strftime('%m/%d/%Y, %H:%M EDT') if bet.event_start_date else None,
+                        'potential_payout': float(bet.potential_payout) if bet.potential_payout else None,
+                        'is_live_bet': bet.is_live_bet,
+                        'is_free_bet': bet.is_free_bet,
+                        'is_odds_boost': bet.is_odds_boost,
+                    })
+                    unified_bets.append(unified_bet)
+        
+        print(f"[DEBUG] Total unified bets before sorting: {len(unified_bets)}")
+        
+        # Sort by time_placed (most recent first)
+        def sort_key(bet):
+            if bet.get('time_placed'):
+                try:
+                    return bet['time_placed']
+                except:
+                    return "1900-01-01 00:00:00"
+            return "1900-01-01 00:00:00"
+        
+        unified_bets.sort(key=sort_key, reverse=True)
+        
+        # Apply pagination
+        total = len(unified_bets)
+        start = (page - 1) * per_page
+        end = start + per_page
+        paginated_bets = unified_bets[start:end]
+        
+        print(f"[DEBUG] Pagination - total: {total}, start: {start}, end: {end}, returned: {len(paginated_bets)}")
+        
+        return jsonify({
+            "current_page": page,
+            "pages": math.ceil(total / per_page) if total > 0 else 1,
+            "total": total,
+            "items": paginated_bets,
+            "mapping_info": {
+                "pikkit_sportsbooks": list(PIKKIT_BOOKS),
+                "oddsjam_sportsbooks": list(ODDSJAM_BOOKS),
+                "prioritization": "manual_mapping_based_on_specifications"
+            },
+            "unified_fields": {
+                "description": "All bets use consistent field structure",
+                "key_fields": [
+                    "source", "sportsbook", "bet_type", "status", "odds", "clv",
+                    "stake", "bet_profit", "sport", "league", "bet_info",
+                    "event_name", "bet_name", "market_name", "time_placed"
+                ]
+            }
+        })
+    
+    except Exception as e:
+        print(f"Error retrieving unified bets: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/unified-stats")
+def get_unified_stats():
+    """Get unified statistics across both data sources."""
+    try:
+        mapper = UnifiedBetMapper()
+        
+        # Get Pikkit stats
+        pikkit_bets = PikkitBet.query.all()
+        pikkit_unified = []
+        
+        for bet in pikkit_bets:
+            unified_bet = mapper.map_pikkit_to_unified({
+                'id': bet.id,
+                'bet_id': bet.bet_id,
+                'sportsbook': bet.sportsbook,
+                'type': bet.bet_type,
+                'status': bet.status,
+                'odds': float(bet.odds) if bet.odds else 0,
+                'amount': float(bet.stake) if bet.stake else 0,
+                'profit': float(bet.bet_profit) if bet.bet_profit else 0,
+                'sports': bet.sport,
+                'leagues': bet.league,
+            })
+            pikkit_unified.append(unified_bet)
+        
+        # Get OddsJam stats (excluding Pikkit sportsbooks)
+        oddsjam_bets = Bet.query.filter(~Bet.sportsbook.in_(mapper.PIKKIT_SPORTSBOOKS)).all()
+        oddsjam_unified = []
+        
+        for bet in oddsjam_bets:
+            unified_bet = mapper.map_oddsjam_to_unified({
+                'id': bet.id,
+                'sportsbook': bet.sportsbook,
+                'status': bet.status,
+                'stake': float(bet.stake) if bet.stake else 0,
+                'bet_profit': float(bet.bet_profit) if bet.bet_profit else 0,
+                'sport': bet.sport,
+                'league': bet.league,
+            })
+            oddsjam_unified.append(unified_bet)
+        
+        # Combine and calculate unified stats
+        all_unified_bets = pikkit_unified + oddsjam_unified
+        
+        # Calculate combined metrics
+        total_bets = len(all_unified_bets)
+        total_stake = sum(bet['stake'] for bet in all_unified_bets)
+        total_profit = sum(bet['bet_profit'] for bet in all_unified_bets)
+        
+        winning_bets = len([bet for bet in all_unified_bets if bet['status'] == 'won'])
+        losing_bets = len([bet for bet in all_unified_bets if bet['status'] == 'lost'])
+        pending_bets = len([bet for bet in all_unified_bets if bet['status'] == 'pending'])
+        
+        # Calculate rates
+        roi = (total_profit / total_stake * 100) if total_stake > 0 else 0
+        win_rate = (winning_bets / (winning_bets + losing_bets) * 100) if (winning_bets + losing_bets) > 0 else 0
+        
+        # Sportsbook breakdown
+        sportsbook_stats = {}
+        for bet in all_unified_bets:
+            sb = bet['sportsbook']
+            if sb not in sportsbook_stats:
+                sportsbook_stats[sb] = {
+                    'name': sb,
+                    'source': bet['source'],
+                    'bet_count': 0,
+                    'total_stake': 0,
+                    'total_profit': 0
+                }
+            
+            sportsbook_stats[sb]['bet_count'] += 1
+            sportsbook_stats[sb]['total_stake'] += bet['stake']
+            sportsbook_stats[sb]['total_profit'] += bet['bet_profit']
+        
+        # Calculate ROI for each sportsbook
+        for sb_data in sportsbook_stats.values():
+            sb_data['roi'] = (sb_data['total_profit'] / sb_data['total_stake'] * 100) if sb_data['total_stake'] > 0 else 0
+        
+        sportsbook_list = list(sportsbook_stats.values())
+        sportsbook_list.sort(key=lambda x: x['total_profit'], reverse=True)
+        
+        return jsonify({
+            "unified_stats": {
+                "total_bets": total_bets,
+                "winning_bets": winning_bets,
+                "losing_bets": losing_bets,
+                "pending_bets": pending_bets,
+                "total_stake": total_stake,
+                "total_profit": total_profit,
+                "roi": roi,
+                "win_rate": win_rate
+            },
+            "source_breakdown": {
+                "pikkit": {
+                    "bet_count": len(pikkit_unified),
+                    "sportsbooks_tracked": len(set(bet['sportsbook'] for bet in pikkit_unified))
+                },
+                "oddsjam": {
+                    "bet_count": len(oddsjam_unified),
+                    "sportsbooks_tracked": len(set(bet['sportsbook'] for bet in oddsjam_unified))
+                }
+            },
+            "sportsbook_stats": sportsbook_list,
+            "mapping_rules": {
+                "pikkit_priority": list(mapper.PIKKIT_SPORTSBOOKS),
+                "oddsjam_priority": "all_others"
+            }
+        })
+    
+    except Exception as e:
+        print(f"Error calculating unified stats: {str(e)}")
         return jsonify({"error": str(e)}), 500
