@@ -12,6 +12,7 @@ import CombinedBetHistoryPage from "./pages/CombinedBetHistoryPage";
 import CalculatorsPage from "./pages/CalculatorsPage";
 import ExchangeCalculator from "./pages/ExchangeCalculator";
 import SettingsPage from "./pages/SettingsPage";
+import CalendarPage from "./pages/CalendarPage";
 
 function App() {
   return (
@@ -33,6 +34,7 @@ function App() {
               <Routes>
                 <Route path="/" element={<DashboardPage />} />
                 <Route path="/arbitrage" element={<ArbitragePage />} />
+                <Route path="/calendar" element={<CalendarPage />} />
                 <Route path="/confirm" element={<ConfirmPage />} />
                 <Route path="/ev" element={<EVAnalysisPage />} />
                 <Route path="/expected-profit" element={<ExpectedProfitPage />} />

@@ -2735,3 +2735,429 @@ def get_unified_chart_summary():
     except Exception as e:
         print(f"Error getting chart summary: {str(e)}")
         return jsonify({"error": str(e)}), 500
+    
+# Replace the calendar endpoints in your backend/routes/bets.py file with these fixed versions
+
+@bp.route("/calendar-month-data")
+def get_calendar_month_data():
+    """Get calendar data for a specific month with unified bet data"""
+    try:
+        # Parse query parameters
+        year = request.args.get('year', datetime.now().year, type=int)
+        month = request.args.get('month', datetime.now().month, type=int)
+        
+        print(f"[DEBUG] Getting calendar data for {year}-{month}")
+        
+        # Define Pikkit sportsbooks
+        PIKKIT_BOOKS = {
+            'BetMGM', 'Caesars Sportsbook', 'Caesars', 'Draftkings Sportsbook', 'DraftKings',
+            'ESPN BET', 'ESPNBet', 'Fanatics', 'Fanduel Sportsbook', 'FanDuel', 
+            'Fliff', 'Novig', 'Onyx', 'Onyx Odds', 'PrizePicks', 'ProphetX', 
+            'Prophet X', 'Rebet', 'Thrillzz', 'Underdog Fantasy'
+        }
+        
+        # Get first and last day of the month
+        first_day = datetime(year, month, 1).date()
+        if month == 12:
+            last_day = datetime(year + 1, 1, 1).date() - timedelta(days=1)
+        else:
+            last_day = datetime(year, month + 1, 1).date() - timedelta(days=1)
+        
+        calendar_data = {}
+        
+        # Query OddsJam data for the month (using event_start_date)
+        # Use separate queries for different status counts to avoid func.case issues
+        oddsjam_data = db.session.query(
+            func.date(Bet.event_start_date).label('bet_date'),
+            func.sum(Bet.bet_profit).label('profit'),
+            func.count(Bet.id).label('bet_count'),
+            func.sum(Bet.stake).label('total_stake')
+        ).filter(
+            ~Bet.sportsbook.in_(PIKKIT_BOOKS),
+            func.date(Bet.event_start_date) >= first_day,
+            func.date(Bet.event_start_date) <= last_day
+        ).group_by(func.date(Bet.event_start_date)).all()
+        
+        # Get status counts separately for OddsJam
+        oddsjam_settled = db.session.query(
+            func.date(Bet.event_start_date).label('bet_date'),
+            func.count(Bet.id).label('settled_count')
+        ).filter(
+            ~Bet.sportsbook.in_(PIKKIT_BOOKS),
+            Bet.status != 'pending',
+            func.date(Bet.event_start_date) >= first_day,
+            func.date(Bet.event_start_date) <= last_day
+        ).group_by(func.date(Bet.event_start_date)).all()
+        
+        oddsjam_pending = db.session.query(
+            func.date(Bet.event_start_date).label('bet_date'),
+            func.count(Bet.id).label('pending_count')
+        ).filter(
+            ~Bet.sportsbook.in_(PIKKIT_BOOKS),
+            Bet.status == 'pending',
+            func.date(Bet.event_start_date) >= first_day,
+            func.date(Bet.event_start_date) <= last_day
+        ).group_by(func.date(Bet.event_start_date)).all()
+        
+        oddsjam_won = db.session.query(
+            func.date(Bet.event_start_date).label('bet_date'),
+            func.count(Bet.id).label('won_count')
+        ).filter(
+            ~Bet.sportsbook.in_(PIKKIT_BOOKS),
+            Bet.status == 'won',
+            func.date(Bet.event_start_date) >= first_day,
+            func.date(Bet.event_start_date) <= last_day
+        ).group_by(func.date(Bet.event_start_date)).all()
+        
+        oddsjam_lost = db.session.query(
+            func.date(Bet.event_start_date).label('bet_date'),
+            func.count(Bet.id).label('lost_count')
+        ).filter(
+            ~Bet.sportsbook.in_(PIKKIT_BOOKS),
+            Bet.status == 'lost',
+            func.date(Bet.event_start_date) >= first_day,
+            func.date(Bet.event_start_date) <= last_day
+        ).group_by(func.date(Bet.event_start_date)).all()
+        
+        oddsjam_push = db.session.query(
+            func.date(Bet.event_start_date).label('bet_date'),
+            func.count(Bet.id).label('push_count')
+        ).filter(
+            ~Bet.sportsbook.in_(PIKKIT_BOOKS),
+            Bet.status == 'push',
+            func.date(Bet.event_start_date) >= first_day,
+            func.date(Bet.event_start_date) <= last_day
+        ).group_by(func.date(Bet.event_start_date)).all()
+        
+        # Query Pikkit data for the month
+        # For settled bets, use time_settled
+        pikkit_settled_data = db.session.query(
+            func.date(PikkitBet.time_settled).label('bet_date'),
+            func.sum(PikkitBet.bet_profit).label('profit'),
+            func.count(PikkitBet.id).label('bet_count'),
+            func.sum(PikkitBet.stake).label('total_stake')
+        ).filter(
+            PikkitBet.status.in_(['SETTLED_WIN', 'SETTLED_LOSS', 'PUSHED', 'VOIDED']),
+            func.date(PikkitBet.time_settled) >= first_day,
+            func.date(PikkitBet.time_settled) <= last_day
+        ).group_by(func.date(PikkitBet.time_settled)).all()
+        
+        pikkit_won = db.session.query(
+            func.date(PikkitBet.time_settled).label('bet_date'),
+            func.count(PikkitBet.id).label('won_count')
+        ).filter(
+            PikkitBet.status == 'SETTLED_WIN',
+            func.date(PikkitBet.time_settled) >= first_day,
+            func.date(PikkitBet.time_settled) <= last_day
+        ).group_by(func.date(PikkitBet.time_settled)).all()
+        
+        pikkit_lost = db.session.query(
+            func.date(PikkitBet.time_settled).label('bet_date'),
+            func.count(PikkitBet.id).label('lost_count')
+        ).filter(
+            PikkitBet.status == 'SETTLED_LOSS',
+            func.date(PikkitBet.time_settled) >= first_day,
+            func.date(PikkitBet.time_settled) <= last_day
+        ).group_by(func.date(PikkitBet.time_settled)).all()
+        
+        pikkit_push = db.session.query(
+            func.date(PikkitBet.time_settled).label('bet_date'),
+            func.count(PikkitBet.id).label('push_count')
+        ).filter(
+            PikkitBet.status == 'PUSHED',
+            func.date(PikkitBet.time_settled) >= first_day,
+            func.date(PikkitBet.time_settled) <= last_day
+        ).group_by(func.date(PikkitBet.time_settled)).all()
+        
+        # For pending bets, use time_placed
+        pikkit_pending_data = db.session.query(
+            func.date(PikkitBet.time_placed).label('bet_date'),
+            func.count(PikkitBet.id).label('pending_count'),
+            func.sum(PikkitBet.stake).label('pending_stake')
+        ).filter(
+            PikkitBet.status == 'PENDING',
+            func.date(PikkitBet.time_placed) >= first_day,
+            func.date(PikkitBet.time_placed) <= last_day
+        ).group_by(func.date(PikkitBet.time_placed)).all()
+        
+        # Create lookup dictionaries for counts
+        oddsjam_settled_dict = {row.bet_date.isoformat(): row.settled_count for row in oddsjam_settled}
+        oddsjam_pending_dict = {row.bet_date.isoformat(): row.pending_count for row in oddsjam_pending}
+        oddsjam_won_dict = {row.bet_date.isoformat(): row.won_count for row in oddsjam_won}
+        oddsjam_lost_dict = {row.bet_date.isoformat(): row.lost_count for row in oddsjam_lost}
+        oddsjam_push_dict = {row.bet_date.isoformat(): row.push_count for row in oddsjam_push}
+        
+        pikkit_won_dict = {row.bet_date.isoformat(): row.won_count for row in pikkit_won}
+        pikkit_lost_dict = {row.bet_date.isoformat(): row.lost_count for row in pikkit_lost}
+        pikkit_push_dict = {row.bet_date.isoformat(): row.push_count for row in pikkit_push}
+        pikkit_pending_dict = {row.bet_date.isoformat(): row.pending_count for row in pikkit_pending_data}
+        pikkit_pending_stake_dict = {row.bet_date.isoformat(): row.pending_stake for row in pikkit_pending_data}
+        
+        # Combine OddsJam data
+        for row in oddsjam_data:
+            date_str = row.bet_date.isoformat()
+            calendar_data[date_str] = {
+                'date': date_str,
+                'profit': float(row.profit) if row.profit else 0,
+                'bet_count': row.bet_count,
+                'settled_count': oddsjam_settled_dict.get(date_str, 0),
+                'pending_count': oddsjam_pending_dict.get(date_str, 0),
+                'won_count': oddsjam_won_dict.get(date_str, 0),
+                'lost_count': oddsjam_lost_dict.get(date_str, 0),
+                'push_count': oddsjam_push_dict.get(date_str, 0),
+                'total_stake': float(row.total_stake) if row.total_stake else 0
+            }
+        
+        # Combine Pikkit settled data
+        for row in pikkit_settled_data:
+            date_str = row.bet_date.isoformat()
+            if date_str in calendar_data:
+                calendar_data[date_str]['profit'] += float(row.profit) if row.profit else 0
+                calendar_data[date_str]['bet_count'] += row.bet_count
+                calendar_data[date_str]['settled_count'] += row.bet_count
+                calendar_data[date_str]['won_count'] += pikkit_won_dict.get(date_str, 0)
+                calendar_data[date_str]['lost_count'] += pikkit_lost_dict.get(date_str, 0)
+                calendar_data[date_str]['push_count'] += pikkit_push_dict.get(date_str, 0)
+                calendar_data[date_str]['total_stake'] += float(row.total_stake) if row.total_stake else 0
+            else:
+                calendar_data[date_str] = {
+                    'date': date_str,
+                    'profit': float(row.profit) if row.profit else 0,
+                    'bet_count': row.bet_count,
+                    'settled_count': row.bet_count,
+                    'pending_count': 0,
+                    'won_count': pikkit_won_dict.get(date_str, 0),
+                    'lost_count': pikkit_lost_dict.get(date_str, 0),
+                    'push_count': pikkit_push_dict.get(date_str, 0),
+                    'total_stake': float(row.total_stake) if row.total_stake else 0
+                }
+        
+        # Combine Pikkit pending data
+        for row in pikkit_pending_data:
+            date_str = row.bet_date.isoformat()
+            if date_str in calendar_data:
+                calendar_data[date_str]['bet_count'] += row.pending_count
+                calendar_data[date_str]['pending_count'] += row.pending_count
+                calendar_data[date_str]['total_stake'] += float(row.pending_stake) if row.pending_stake else 0
+            else:
+                calendar_data[date_str] = {
+                    'date': date_str,
+                    'profit': 0,
+                    'bet_count': row.pending_count,
+                    'settled_count': 0,
+                    'pending_count': row.pending_count,
+                    'won_count': 0,
+                    'lost_count': 0,
+                    'push_count': 0,
+                    'total_stake': float(row.pending_stake) if row.pending_stake else 0
+                }
+        
+        # Convert to list and sort by date
+        calendar_list = list(calendar_data.values())
+        calendar_list.sort(key=lambda x: x['date'])
+        
+        print(f"[DEBUG] Generated calendar data for {len(calendar_list)} days")
+        
+        return jsonify({
+            'calendar_data': calendar_list,
+            'month_info': {
+                'year': year,
+                'month': month,
+                'first_day': first_day.isoformat(),
+                'last_day': last_day.isoformat()
+            },
+            'summary': {
+                'total_profit': sum(day['profit'] for day in calendar_list),
+                'total_bets': sum(day['bet_count'] for day in calendar_list),
+                'days_with_bets': len(calendar_list),
+                'settled_bets': sum(day['settled_count'] for day in calendar_list),
+                'pending_bets': sum(day['pending_count'] for day in calendar_list)
+            }
+        })
+    
+    except Exception as e:
+        print(f"Error getting calendar month data: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/calendar-day-data")
+def get_calendar_day_data():
+    """Get detailed bet data for a specific day"""
+    try:
+        # Parse query parameters
+        date_str = request.args.get('date')
+        
+        if not date_str:
+            return jsonify({"error": "Date parameter is required"}), 400
+        
+        try:
+            target_date = datetime.fromisoformat(date_str).date()
+        except ValueError:
+            return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+        
+        print(f"[DEBUG] Getting day data for {target_date}")
+        
+        # Define Pikkit sportsbooks
+        PIKKIT_BOOKS = {
+            'BetMGM', 'Caesars Sportsbook', 'Caesars', 'Draftkings Sportsbook', 'DraftKings',
+            'ESPN BET', 'ESPNBet', 'Fanatics', 'Fanduel Sportsbook', 'FanDuel', 
+            'Fliff', 'Novig', 'Onyx', 'Onyx Odds', 'PrizePicks', 'ProphetX', 
+            'Prophet X', 'Rebet', 'Thrillzz', 'Underdog Fantasy'
+        }
+        
+        unified_bets = []
+        
+        # Get OddsJam bets for this date
+        oddsjam_bets = Bet.query.filter(
+            ~Bet.sportsbook.in_(PIKKIT_BOOKS),
+            func.date(Bet.event_start_date) == target_date
+        ).all()
+        
+        # Convert OddsJam bets to unified format
+        for bet in oddsjam_bets:
+            unified_bets.append({
+                "source": "oddsjam",
+                "original_id": bet.id,
+                "sportsbook": bet.sportsbook or "",
+                "bet_type": bet.bet_type or "",
+                "status": bet.status or "unknown",
+                "odds": bet.odds or 0,
+                "clv": bet.clv,
+                "stake": float(bet.stake) if bet.stake else 0,
+                "bet_profit": float(bet.bet_profit) if bet.bet_profit else 0,
+                "sport": bet.sport or "",
+                "league": bet.league or "",
+                "time_placed": bet.created_at.isoformat() if bet.created_at else None,
+                "time_settled": None,  # OddsJam doesn't track settlement time
+                "event_start_date": bet.event_start_date.isoformat() if bet.event_start_date else None,
+                "bet_info": f"{bet.event_name or ''} - {bet.bet_name or ''}",
+                "event_name": bet.event_name or "",
+                "bet_name": bet.bet_name or "",
+                "market_name": bet.market_name or "",
+                "potential_payout": float(bet.potential_payout) if bet.potential_payout else None
+            })
+        
+        # Get Pikkit bets for this date (check both time_placed and time_settled)
+        pikkit_bets_placed = PikkitBet.query.filter(
+            func.date(PikkitBet.time_placed) == target_date
+        ).all()
+        
+        pikkit_bets_settled = PikkitBet.query.filter(
+            func.date(PikkitBet.time_settled) == target_date,
+            PikkitBet.status.in_(['SETTLED_WIN', 'SETTLED_LOSS', 'PUSHED', 'VOIDED'])
+        ).all()
+        
+        # Combine and deduplicate Pikkit bets
+        pikkit_bet_ids = set()
+        all_pikkit_bets = []
+        
+        for bet in pikkit_bets_placed:
+            if bet.bet_id not in pikkit_bet_ids:
+                all_pikkit_bets.append(bet)
+                pikkit_bet_ids.add(bet.bet_id)
+        
+        for bet in pikkit_bets_settled:
+            if bet.bet_id not in pikkit_bet_ids:
+                all_pikkit_bets.append(bet)
+                pikkit_bet_ids.add(bet.bet_id)
+        
+        # Convert Pikkit status to unified format
+        def normalize_pikkit_status(status):
+            status_map = {
+                'SETTLED_WIN': 'won',
+                'SETTLED_LOSS': 'lost',
+                'PENDING': 'pending',
+                'PUSHED': 'push',
+                'VOIDED': 'void',
+                'CANCELLED': 'void'
+            }
+            return status_map.get(status, status.lower() if status else 'unknown')
+        
+        # Convert Pikkit bets to unified format
+        for bet in all_pikkit_bets:
+            # Calculate American odds from decimal
+            american_odds = 0
+            if bet.odds and bet.odds > 0:
+                decimal_odds = float(bet.odds)
+                if decimal_odds >= 2.0:
+                    american_odds = int((decimal_odds - 1) * 100)
+                else:
+                    american_odds = int(-100 / (decimal_odds - 1))
+            
+            unified_bets.append({
+                "source": "pikkit",
+                "original_id": bet.id,
+                "bet_id": bet.bet_id,
+                "sportsbook": bet.sportsbook or "",
+                "bet_type": bet.bet_type or "",
+                "status": normalize_pikkit_status(bet.status),
+                "odds": american_odds,
+                "clv": None,  # Pikkit doesn't provide CLV in same format
+                "stake": float(bet.stake) if bet.stake else 0,
+                "bet_profit": float(bet.bet_profit) if bet.bet_profit else 0,
+                "sport": bet.sport or "",
+                "league": bet.league or "",
+                "time_placed": bet.time_placed.isoformat() if bet.time_placed else None,
+                "time_settled": bet.time_settled.isoformat() if bet.time_settled else None,
+                "event_start_date": bet.time_placed.isoformat() if bet.time_placed else None,
+                "bet_info": bet.bet_info or "",
+                "event_name": bet.event_name or "",
+                "bet_name": bet.bet_name or "",
+                "market_name": bet.market_name or "",
+                "potential_payout": None  # Calculate if needed
+            })
+        
+        # Sort bets by time_placed
+        def sort_key(bet):
+            return bet.get('time_placed', '1900-01-01T00:00:00')
+        
+        unified_bets.sort(key=sort_key, reverse=True)
+        
+        # Calculate day statistics
+        total_bets = len(unified_bets)
+        settled_bets = len([bet for bet in unified_bets if bet['status'] not in ['pending']])
+        pending_bets = len([bet for bet in unified_bets if bet['status'] == 'pending'])
+        won_bets = len([bet for bet in unified_bets if bet['status'] == 'won'])
+        lost_bets = len([bet for bet in unified_bets if bet['status'] == 'lost'])
+        push_bets = len([bet for bet in unified_bets if bet['status'] == 'push'])
+        void_bets = len([bet for bet in unified_bets if bet['status'] == 'void'])
+        
+        total_stake = sum(bet['stake'] for bet in unified_bets)
+        total_profit = sum(bet['bet_profit'] for bet in unified_bets)
+        
+        # Calculate metrics
+        roi = (total_profit / total_stake * 100) if total_stake > 0 else 0
+        win_rate = (won_bets / (won_bets + lost_bets) * 100) if (won_bets + lost_bets) > 0 else 0
+        avg_odds = sum(bet['odds'] for bet in unified_bets if bet['odds']) / len([bet for bet in unified_bets if bet['odds']]) if any(bet['odds'] for bet in unified_bets) else 0
+        
+        # Find biggest win/loss
+        profits = [bet['bet_profit'] for bet in unified_bets if bet['status'] in ['won', 'lost']]
+        biggest_win = max(profits) if profits else 0
+        biggest_loss = min(profits) if profits else 0
+        
+        return jsonify({
+            "date": date_str,
+            "bets": unified_bets,
+            "total_bets": total_bets,
+            "settled_bets": settled_bets,
+            "pending_bets": pending_bets,
+            "won_bets": won_bets,
+            "lost_bets": lost_bets,
+            "push_bets": push_bets,
+            "void_bets": void_bets,
+            "total_stake": total_stake,
+            "total_profit": total_profit,
+            "roi": roi,
+            "win_rate": win_rate,
+            "avg_odds": avg_odds,
+            "biggest_win": biggest_win,
+            "biggest_loss": biggest_loss
+        })
+    
+    except Exception as e:
+        print(f"Error getting calendar day data: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
