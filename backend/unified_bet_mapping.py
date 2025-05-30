@@ -1,229 +1,211 @@
 # backend/unified_bet_mapping.py
-"""
-Unified betting system that maps fields between OddsJam and Pikkit exports
-to create consistent data structure across both sources.
-"""
-
 from datetime import datetime
 import re
-from typing import Dict, Any, Optional
 
 class UnifiedBetMapper:
-    """Maps fields between OddsJam and Pikkit to create unified bet records."""
+    """Maps bets from different sources (OddsJam, Pikkit) to a unified format."""
     
-    # Manual mapping based on your specifications
-    # These sportsbooks will use Pikkit as the data source
-    PIKKIT_SPORTSBOOKS = {
-        'BetMGM', 'Caesars Sportsbook', 'Caesars', 'Draftkings Sportsbook', 'DraftKings',
-        'ESPN BET', 'ESPNBet', 'Fanatics', 'Fanduel Sportsbook', 'FanDuel', 
-        'Fliff', 'Novig', 'Onyx', 'Onyx Odds', 'PrizePicks', 'ProphetX', 
-        'Prophet X', 'Rebet', 'Thrillzz', 'Underdog Fantasy'
-    }
-    
-    # These sportsbooks will use OddsJam as the data source
-    ODDSJAM_SPORTSBOOKS = {
-        'BetNow', 'BetOnline', 'BetUS', 'BookMaker', 'Bovada', 
-        'Everygame', 'MyBookie', 'Sportzino', 'Xbet', 'bet105', 'betwhale'
-    }
-    
-    @staticmethod
-    def map_oddsjam_to_unified(oddsjam_row: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert OddsJam row to unified format."""
+    def __init__(self):
+        # Define which sportsbooks are tracked by which system
+        self.PIKKIT_SPORTSBOOKS = {
+            'BetMGM', 'Caesars Sportsbook', 'Caesars', 'Draftkings Sportsbook', 'DraftKings',
+            'ESPN BET', 'ESPNBet', 'Fanatics', 'Fanduel Sportsbook', 'FanDuel', 
+            'Fliff', 'Novig', 'Onyx', 'Onyx Odds', 'PrizePicks', 'ProphetX', 
+            'Prophet X', 'Rebet', 'Thrillzz', 'Underdog Fantasy'
+        }
         
-        # Create unified bet_info field by combining OddsJam fields
-        bet_info = UnifiedBetMapper._create_unified_bet_info(
-            bet_name=oddsjam_row.get('bet_name', ''),
-            market_name=oddsjam_row.get('market_name', ''),
-            event_name=oddsjam_row.get('event_name', '')
-        )
-        
-        # Convert status
-        status = UnifiedBetMapper._normalize_status(oddsjam_row.get('status', ''))
-        
-        # Convert odds format (OddsJam uses American odds directly)
-        odds = oddsjam_row.get('odds', 0)
-        clv = oddsjam_row.get('clv', 0)
-        
-        return {
-            # Core identification
-            'source': 'oddsjam',
-            'original_id': oddsjam_row.get('id'),
-            'bet_id': None,  # OddsJam doesn't have bet_id
-            
-            # Unified fields
-            'sportsbook': oddsjam_row.get('sportsbook', ''),
-            'bet_type': UnifiedBetMapper._normalize_bet_type(oddsjam_row.get('bet_type', '')),
-            'status': status,
-            'odds': odds,
-            'clv': clv,
-            'stake': float(oddsjam_row.get('stake', 0)) if oddsjam_row.get('stake') else 0,
-            'bet_profit': float(oddsjam_row.get('bet_profit', 0)) if oddsjam_row.get('bet_profit') else 0,
-            'sport': oddsjam_row.get('sport', ''),
-            'league': oddsjam_row.get('league', ''),
-            'tags': oddsjam_row.get('tags', ''),
-            
-            # Datetime fields
-            'time_placed': UnifiedBetMapper._parse_oddsjam_datetime(oddsjam_row.get('created_at')),
-            'time_settled': None,  # OddsJam doesn't track settlement time
-            'event_start_date': UnifiedBetMapper._parse_oddsjam_datetime(oddsjam_row.get('event_start_date')),
-            
-            # Unified bet description
-            'bet_info': bet_info,
-            
-            # Parsed components (from original OddsJam structure)
-            'event_name': oddsjam_row.get('event_name', ''),
-            'bet_name': oddsjam_row.get('bet_name', ''),
-            'market_name': oddsjam_row.get('market_name', ''),
-            
-            # Additional OddsJam-specific fields (optional)
-            'potential_payout': float(oddsjam_row.get('potential_payout', 0)) if oddsjam_row.get('potential_payout') else None,
-            'is_live_bet': oddsjam_row.get('is_live_bet', False),
-            'is_free_bet': oddsjam_row.get('is_free_bet', False),
-            'is_odds_boost': oddsjam_row.get('is_odds_boost', False),
+        self.ODDSJAM_SPORTSBOOKS = {
+            'BetNow', 'BetOnline', 'BetUS', 'BookMaker', 'Bovada', 
+            'Everygame', 'MyBookie', 'Sportzino', 'Xbet', 'bet105', 'betwhale'
         }
     
-    @staticmethod
-    def map_pikkit_to_unified(pikkit_row: Dict[str, Any]) -> Dict[str, Any]:
-        """Convert Pikkit row to unified format."""
+    def get_source_for_sportsbook(self, sportsbook):
+        """Determine which source should be used for a given sportsbook."""
+        if sportsbook in self.PIKKIT_SPORTSBOOKS:
+            return 'pikkit'
+        elif sportsbook in self.ODDSJAM_SPORTSBOOKS:
+            return 'oddsjam'
+        else:
+            # Default fallback - could be configured based on your preferences
+            return 'oddsjam'  # or 'pikkit' based on your preference
+    
+    def _normalize_status(self, status):
+        """Normalize bet status across different sources."""
+        if not status:
+            return 'unknown'
         
-        # Parse bet_info to extract components
-        parsed_info = UnifiedBetMapper._parse_pikkit_bet_info(
-            pikkit_row.get('bet_info', ''),
-            pikkit_row.get('type', 'straight')
-        )
+        status_lower = status.lower()
         
-        # Convert status
-        status = UnifiedBetMapper._normalize_status(pikkit_row.get('status', ''))
+        # Handle Pikkit status format
+        if status_lower in ['settled_win', 'settled-win']:
+            return 'won'
+        elif status_lower in ['settled_loss', 'settled-loss']:
+            return 'lost'
+        elif status_lower == 'pending':
+            return 'pending'
+        elif status_lower in ['cancelled', 'voided', 'refunded']:
+            return 'void'
+        elif status_lower == 'pushed':
+            return 'push'
         
-        # Convert decimal odds to American odds for consistency
-        american_odds = UnifiedBetMapper._decimal_to_american_odds(pikkit_row.get('odds', 0))
-        american_clv = UnifiedBetMapper._decimal_to_american_odds(pikkit_row.get('closing_line', 0))
+        # Handle OddsJam status format (already normalized)
+        elif status_lower in ['won', 'lost', 'pending', 'void', 'push']:
+            return status_lower
         
+        return status_lower
+    
+    def _decimal_to_american_odds(self, decimal_odds):
+        """Convert decimal odds to American odds."""
+        if not decimal_odds or decimal_odds <= 1:
+            return 0
+        
+        if decimal_odds >= 2.0:
+            return int((decimal_odds - 1) * 100)
+        else:
+            return int(-100 / (decimal_odds - 1))
+    
+    def _parse_pikkit_time(self, time_str):
+        """Parse Pikkit time format."""
+        if not time_str:
+            return None
+        
+        try:
+            # Handle format: "03/11/2025 15:52:19 GMT"
+            clean_time = time_str.replace(' GMT', '')
+            return clean_time
+        except:
+            return time_str
+    
+    def _parse_oddsjam_time(self, time_str):
+        """Parse OddsJam time format."""
+        if not time_str:
+            return None
+        
+        try:
+            # Handle format: "03/11/2025, 15:52 EDT"
+            clean_time = re.sub(r' [A-Z]{3,4}$', '', time_str)
+            return clean_time
+        except:
+            return time_str
+    
+    def map_pikkit_to_unified(self, pikkit_bet):
+        """Map a Pikkit bet to unified format."""
         return {
-            # Core identification
             'source': 'pikkit',
-            'original_id': pikkit_row.get('id'),
-            'bet_id': pikkit_row.get('bet_id'),
-            
-            # Unified fields
-            'sportsbook': pikkit_row.get('sportsbook', ''),
-            'bet_type': UnifiedBetMapper._normalize_bet_type(pikkit_row.get('type', '')),
-            'status': status,
-            'odds': american_odds,
-            'clv': american_clv,
-            'stake': float(pikkit_row.get('amount', 0)) if pikkit_row.get('amount') else 0,
-            'bet_profit': float(pikkit_row.get('profit', 0)) if pikkit_row.get('profit') else 0,
-            'sport': pikkit_row.get('sports', ''),
-            'league': pikkit_row.get('leagues', ''),
-            'tags': pikkit_row.get('tags', ''),
-            
-            # Datetime fields
-            'time_placed': UnifiedBetMapper._parse_pikkit_datetime(pikkit_row.get('time_placed')),
-            'time_settled': UnifiedBetMapper._parse_pikkit_datetime(pikkit_row.get('time_settled')),
-            'event_start_date': None,  # Pikkit doesn't track event start date
-            
-            # Unified bet description
-            'bet_info': pikkit_row.get('bet_info', ''),
-            
-            # Parsed components (extracted from bet_info)
-            'event_name': parsed_info['event_name'],
-            'bet_name': parsed_info['bet_name'],
-            'market_name': parsed_info['market_name'],
-            
-            # Additional Pikkit-specific fields
-            'ev': float(pikkit_row.get('ev', 0)) if pikkit_row.get('ev') else None,
+            'original_id': pikkit_bet.get('id'),
+            'bet_id': pikkit_bet.get('bet_id'),
+            'sportsbook': pikkit_bet.get('sportsbook', ''),
+            'bet_type': pikkit_bet.get('type', ''),
+            'status': self._normalize_status(pikkit_bet.get('status')),
+            'odds': self._decimal_to_american_odds(pikkit_bet.get('odds', 0)),
+            'clv': self._decimal_to_american_odds(pikkit_bet.get('closing_line', 0)) - self._decimal_to_american_odds(pikkit_bet.get('odds', 0)) if pikkit_bet.get('closing_line') else None,
+            'stake': pikkit_bet.get('amount', 0),
+            'bet_profit': pikkit_bet.get('profit', 0),
+            'sport': pikkit_bet.get('sports', ''),
+            'league': pikkit_bet.get('leagues', ''),
+            'tags': pikkit_bet.get('tags', ''),
+            'time_placed': self._parse_pikkit_time(pikkit_bet.get('time_placed')),
+            'time_settled': self._parse_pikkit_time(pikkit_bet.get('time_settled')),
+            'event_start_date': self._parse_pikkit_time(pikkit_bet.get('time_placed')),  # Use time_placed as event date
+            'bet_info': pikkit_bet.get('bet_info', ''),
+            'event_name': self._extract_event_name_from_bet_info(pikkit_bet.get('bet_info', '')),
+            'bet_name': self._extract_bet_name_from_bet_info(pikkit_bet.get('bet_info', '')),
+            'market_name': self._extract_market_name_from_bet_info(pikkit_bet.get('bet_info', '')),
+            'potential_payout': None,
+            'is_live_bet': False,
+            'is_free_bet': False,
+            'is_odds_boost': False,
+            'ev': pikkit_bet.get('ev')
         }
     
-    @staticmethod
-    def _create_unified_bet_info(bet_name: str, market_name: str, event_name: str) -> str:
-        """
-        Create unified bet_info field from OddsJam components.
-        Format similar to Pikkit: [bet_name] [market_name] [event_name]
-        Example: "Hunter Greene Over 1.5 Player Walks Chicago Cubs vs Cincinnati Reds"
-        """
-        parts = []
-        
-        # Always include bet_name if available
-        if bet_name and bet_name.strip():
-            parts.append(bet_name.strip())
-        
-        # Add market_name if it's not already contained in bet_name
-        if market_name and market_name.strip():
-            market_clean = market_name.strip()
-            # Only add if it's not already in the bet_name
-            if not bet_name or market_clean.lower() not in bet_name.lower():
-                parts.append(market_clean)
-        
-        # Always add event_name at the end
-        if event_name and event_name.strip():
-            parts.append(event_name.strip())
-        
-        return ' '.join(parts)
+    def map_oddsjam_to_unified(self, oddsjam_bet):
+        """Map an OddsJam bet to unified format."""
+        return {
+            'source': 'oddsjam',
+            'original_id': oddsjam_bet.get('id'),
+            'bet_id': None,
+            'sportsbook': oddsjam_bet.get('sportsbook', ''),
+            'bet_type': oddsjam_bet.get('bet_type', ''),
+            'status': self._normalize_status(oddsjam_bet.get('status')),
+            'odds': oddsjam_bet.get('odds', 0),
+            'clv': oddsjam_bet.get('clv'),
+            'stake': oddsjam_bet.get('stake', 0),
+            'bet_profit': oddsjam_bet.get('bet_profit', 0),
+            'sport': oddsjam_bet.get('sport', ''),
+            'league': oddsjam_bet.get('league', ''),
+            'tags': oddsjam_bet.get('tags', ''),
+            'time_placed': self._parse_oddsjam_time(oddsjam_bet.get('created_at')),
+            'time_settled': None,  # OddsJam doesn't track settlement time separately
+            'event_start_date': self._parse_oddsjam_time(oddsjam_bet.get('event_start_date')),
+            'bet_info': self._create_bet_info_from_oddsjam(oddsjam_bet),
+            'event_name': oddsjam_bet.get('event_name', ''),
+            'bet_name': oddsjam_bet.get('bet_name', ''),
+            'market_name': oddsjam_bet.get('market_name', ''),
+            'potential_payout': oddsjam_bet.get('potential_payout'),
+            'is_live_bet': oddsjam_bet.get('is_live_bet', False),
+            'is_free_bet': oddsjam_bet.get('is_free_bet', False),
+            'is_odds_boost': oddsjam_bet.get('is_odds_boost', False),
+            'ev': None
+        }
     
-    @staticmethod
-    def _parse_pikkit_bet_info(bet_info: str, bet_type: str = "straight") -> Dict[str, str]:
-        """
-        Parse Pikkit's bet_info field to extract components.
-        
-        Examples:
-        - "Phoenix Suns Moneyline Phoenix Suns @ Houston Rockets"
-        - "under 14.5 Bryce Thompson Total Points Cincinnati Bearcats at Oklahoma State Cowboys"
-        """
+    def _extract_event_name_from_bet_info(self, bet_info):
+        """Extract event name from Pikkit bet_info."""
         if not bet_info:
-            return {'bet_name': '', 'event_name': '', 'market_name': ''}
+            return 'Unknown Event'
         
-        bet_info = bet_info.strip()
-        
-        # Handle parlays differently
-        if bet_type.lower() == 'parlay':
-            legs = [leg.strip() for leg in bet_info.split('|')]
-            if len(legs) > 1:
-                return {
-                    'bet_name': f"Parlay ({len(legs)} legs)",
-                    'event_name': "Multiple Events",
-                    'market_name': "Parlay"
-                }
-        
-        # Common patterns to identify event names at the end
-        event_patterns = [
+        # Common patterns for team matchups
+        team_patterns = [
             r'(.+)\s+at\s+(.+)$',
             r'(.+)\s+vs\.?\s+(.+)$',
-            r'(.+)\s+@\s+(.+)$',
+            r'(.+)\s+@\s+(.+)$'
         ]
         
-        event_name = ''
-        bet_description = bet_info
+        for pattern in team_patterns:
+            matches = re.search(pattern, bet_info, re.IGNORECASE)
+            if matches:
+                return f"{matches.group(1).strip()} at {matches.group(2).strip()}"
         
-        # Try to find team matchup at the end
-        for pattern in event_patterns:
-            match = re.search(pattern, bet_info, re.IGNORECASE)
-            if match:
-                # Extract event name
-                team1 = match.group(1).strip()
-                team2 = match.group(2).strip()
-                event_name = f"{team1} vs {team2}"
-                # Everything before the event is the bet description
-                bet_description = bet_info[:match.start()].strip()
-                break
+        # If no pattern found, take first part before common bet descriptors
+        bet_descriptors = ['total points', 'total assists', 'total rebounds', 'moneyline', 'spread', 'over', 'under']
+        for descriptor in bet_descriptors:
+            if descriptor in bet_info.lower():
+                parts = bet_info.lower().split(descriptor)
+                if parts[0].strip():
+                    return parts[0].strip().title()
         
-        # Extract market type from bet description
-        market_name = UnifiedBetMapper._extract_market_from_description(bet_description)
-        
-        return {
-            'bet_name': bet_description,
-            'event_name': event_name or "Unknown Event",
-            'market_name': market_name
-        }
+        return 'Unknown Event'
     
-    @staticmethod
-    def _extract_market_from_description(description: str) -> str:
-        """Extract market type from bet description."""
-        if not description:
-            return ''
+    def _extract_bet_name_from_bet_info(self, bet_info):
+        """Extract bet name from Pikkit bet_info."""
+        if not bet_info:
+            return 'Unknown Bet'
         
-        description_lower = description.lower()
+        # For parlays, return the full info (truncated)
+        if '|' in bet_info:
+            return bet_info[:100] + '...' if len(bet_info) > 100 else bet_info
         
-        # Market patterns (order matters - more specific first)
+        # For single bets, return the bet description part
+        team_patterns = [
+            r'(.+)\s+at\s+(.+)$',
+            r'(.+)\s+vs\.?\s+(.+)$',
+            r'(.+)\s+@\s+(.+)$'
+        ]
+        
+        for pattern in team_patterns:
+            matches = re.search(pattern, bet_info, re.IGNORECASE)
+            if matches:
+                # Everything before the teams is the bet description
+                bet_description = bet_info[:matches.start()].strip()
+                return bet_description if bet_description else bet_info
+        
+        return bet_info
+    
+    def _extract_market_name_from_bet_info(self, bet_info):
+        """Extract market name from Pikkit bet_info."""
+        if not bet_info:
+            return 'Unknown Market'
+        
+        # Try to extract market type from bet description
         market_patterns = [
             (r'total\s+points?', 'Total Points'),
             (r'total\s+assists?', 'Total Assists'),
@@ -231,160 +213,146 @@ class UnifiedBetMapper:
             (r'total\s+goals?', 'Total Goals'),
             (r'total\s+yards?', 'Total Yards'),
             (r'total\s+touchdowns?', 'Total Touchdowns'),
-            (r'moneyline', 'Moneyline'),
             (r'spread', 'Spread'),
+            (r'moneyline', 'Moneyline'),
             (r'over/under', 'Total'),
-            (r'under\s+\d+\.?\d*', 'Total'),
-            (r'over\s+\d+\.?\d*', 'Total'),
+            (r'player\s+props?', 'Player Props'),
             (r'three\s+pointers?', 'Three Pointers'),
             (r'rebounds?', 'Rebounds'),
             (r'assists?', 'Assists'),
-            (r'points?', 'Points'),
+            (r'points?', 'Points')
         ]
         
+        bet_info_lower = bet_info.lower()
         for pattern, market in market_patterns:
-            if re.search(pattern, description_lower):
+            if re.search(pattern, bet_info_lower):
                 return market
         
-        return 'Other'
+        return 'Unknown Market'
     
-    @staticmethod
-    def _normalize_status(status: str) -> str:
-        """Normalize status values across both systems."""
-        if not status:
-            return 'pending'
+    def _create_bet_info_from_oddsjam(self, oddsjam_bet):
+        """Create a bet_info string from OddsJam bet fields."""
+        parts = []
         
-        status_map = {
-            # Pikkit statuses
-            'SETTLED_WIN': 'won',
-            'SETTLED_LOSS': 'lost',
-            'PENDING': 'pending',
-            'CANCELLED': 'void',
-            'VOIDED': 'void',
-            'PUSHED': 'push',
-            'REFUNDED': 'void',
-            
-            # OddsJam statuses (already normalized)
-            'won': 'won',
-            'lost': 'lost',
-            'pending': 'pending',
-            'void': 'void',
-            'push': 'push',
+        if oddsjam_bet.get('bet_name'):
+            parts.append(oddsjam_bet['bet_name'])
+        
+        if oddsjam_bet.get('event_name'):
+            parts.append(f"- {oddsjam_bet['event_name']}")
+        
+        if oddsjam_bet.get('market_name'):
+            parts.append(f"({oddsjam_bet['market_name']})")
+        
+        return ' '.join(parts) if parts else 'Unknown Bet'
+    
+    def unify_bet_list(self, oddsjam_bets, pikkit_bets):
+        """
+        Combine bets from both sources, applying smart prioritization to avoid duplicates.
+        """
+        unified_bets = []
+        
+        # Map OddsJam bets (only for non-Pikkit sportsbooks)
+        for bet in oddsjam_bets:
+            if bet.get('sportsbook') not in self.PIKKIT_SPORTSBOOKS:
+                unified_bet = self.map_oddsjam_to_unified(bet)
+                unified_bets.append(unified_bet)
+        
+        # Map Pikkit bets (only for Pikkit-tracked sportsbooks)
+        for bet in pikkit_bets:
+            if bet.get('sportsbook') in self.PIKKIT_SPORTSBOOKS:
+                unified_bet = self.map_pikkit_to_unified(bet)
+                unified_bets.append(unified_bet)
+        
+        return unified_bets
+    
+    def get_unified_stats(self, oddsjam_bets, pikkit_bets):
+        """
+        Calculate unified statistics across both data sources.
+        """
+        # Filter bets based on source prioritization
+        relevant_oddsjam = [bet for bet in oddsjam_bets if bet.get('sportsbook') not in self.PIKKIT_SPORTSBOOKS]
+        relevant_pikkit = [bet for bet in pikkit_bets if bet.get('sportsbook') in self.PIKKIT_SPORTSBOOKS]
+        
+        # Calculate combined metrics
+        total_bets = len(relevant_oddsjam) + len(relevant_pikkit)
+        
+        # Sum profits and stakes
+        oddsjam_profit = sum(float(bet.get('bet_profit', 0)) for bet in relevant_oddsjam)
+        pikkit_profit = sum(float(bet.get('profit', 0)) for bet in relevant_pikkit)
+        total_profit = oddsjam_profit + pikkit_profit
+        
+        oddsjam_stake = sum(float(bet.get('stake', 0)) for bet in relevant_oddsjam)
+        pikkit_stake = sum(float(bet.get('amount', 0)) for bet in relevant_pikkit)
+        total_stake = oddsjam_stake + pikkit_stake
+        
+        # Calculate win rates
+        oddsjam_wins = len([bet for bet in relevant_oddsjam if bet.get('status') == 'won'])
+        pikkit_wins = len([bet for bet in relevant_pikkit if bet.get('status') in ['SETTLED_WIN', 'won']])
+        total_wins = oddsjam_wins + pikkit_wins
+        
+        oddsjam_losses = len([bet for bet in relevant_oddsjam if bet.get('status') == 'lost'])
+        pikkit_losses = len([bet for bet in relevant_pikkit if bet.get('status') in ['SETTLED_LOSS', 'lost']])
+        total_losses = oddsjam_losses + pikkit_losses
+        
+        # Calculate rates
+        total_settled = total_wins + total_losses
+        win_rate = (total_wins / total_settled * 100) if total_settled > 0 else 0
+        roi = (total_profit / total_stake * 100) if total_stake > 0 else 0
+        
+        return {
+            'total_bets': total_bets,
+            'total_profit': total_profit,
+            'total_stake': total_stake,
+            'win_rate': win_rate,
+            'roi': roi,
+            'winning_bets': total_wins,
+            'losing_bets': total_losses,
+            'source_breakdown': {
+                'oddsjam': {
+                    'bet_count': len(relevant_oddsjam),
+                    'profit': oddsjam_profit,
+                    'stake': oddsjam_stake
+                },
+                'pikkit': {
+                    'bet_count': len(relevant_pikkit),
+                    'profit': pikkit_profit,
+                    'stake': pikkit_stake
+                }
+            }
+        }
+    
+    def should_use_pikkit_for_sportsbook(self, sportsbook):
+        """Check if Pikkit should be the primary source for this sportsbook."""
+        return sportsbook in self.PIKKIT_SPORTSBOOKS
+    
+    def should_use_oddsjam_for_sportsbook(self, sportsbook):
+        """Check if OddsJam should be the primary source for this sportsbook."""
+        return sportsbook in self.ODDSJAM_SPORTSBOOKS or sportsbook not in self.PIKKIT_SPORTSBOOKS
+    
+    def get_all_tracked_sportsbooks(self):
+        """Get all sportsbooks tracked by either system."""
+        return {
+            'pikkit': list(self.PIKKIT_SPORTSBOOKS),
+            'oddsjam': list(self.ODDSJAM_SPORTSBOOKS),
+            'all': list(self.PIKKIT_SPORTSBOOKS | self.ODDSJAM_SPORTSBOOKS)
+        }
+    
+    def validate_bet_data(self, bet_data, source):
+        """Validate that bet data has required fields for mapping."""
+        required_fields = {
+            'pikkit': ['id', 'sportsbook', 'status', 'amount'],
+            'oddsjam': ['id', 'sportsbook', 'status', 'stake']
         }
         
-        return status_map.get(status.upper(), status.lower())
-    
-    @staticmethod
-    def _normalize_bet_type(bet_type: str) -> str:
-        """Normalize bet type values."""
-        if not bet_type:
-            return 'straight'
+        if source not in required_fields:
+            return False, f"Unknown source: {source}"
         
-        type_map = {
-            'straight': 'straight',
-            'parlay': 'parlay',
-            'normal': 'straight',
-            'positive_ev': 'positive_ev',
-        }
+        missing_fields = []
+        for field in required_fields[source]:
+            if field not in bet_data or bet_data[field] is None:
+                missing_fields.append(field)
         
-        return type_map.get(bet_type.lower(), bet_type.lower())
-    
-    @staticmethod
-    def _decimal_to_american_odds(decimal_odds: float) -> Optional[int]:
-        """Convert decimal odds to American odds."""
-        if not decimal_odds or decimal_odds <= 1:
-            return None
+        if missing_fields:
+            return False, f"Missing required fields: {missing_fields}"
         
-        if decimal_odds >= 2.0:
-            return int((decimal_odds - 1) * 100)
-        else:
-            return int(-100 / (decimal_odds - 1))
-    
-    @staticmethod
-    def _parse_oddsjam_datetime(date_str: str) -> Optional[datetime]:
-        """Parse OddsJam datetime format."""
-        if not date_str:
-            return None
-        
-        try:
-            # OddsJam format: "05/23/2025, 09:41 EDT"
-            # Remove timezone and parse
-            clean_date = re.sub(r'\s+(EDT|EST|CST|CDT|PST|PDT)$', '', date_str)
-            return datetime.strptime(clean_date, '%m/%d/%Y, %H:%M')
-        except:
-            return None
-    
-    @staticmethod
-    def _parse_pikkit_datetime(date_str: str) -> Optional[datetime]:
-        """Parse Pikkit datetime format."""
-        if not date_str:
-            return None
-        
-        try:
-            # Pikkit format: "03/11/2025 15:52:19 GMT"
-            clean_date = re.sub(r'\s+GMT$', '', date_str)
-            return datetime.strptime(clean_date, '%m/%d/%Y %H:%M:%S')
-        except:
-            return None
-    
-    @staticmethod
-    def determine_source_priority(sportsbook: str) -> str:
-        """Determine which system should be used for a given sportsbook."""
-        # Normalize sportsbook name for comparison
-        normalized_sb = sportsbook.strip()
-        
-        # Check Pikkit sportsbooks first
-        if normalized_sb in UnifiedBetMapper.PIKKIT_SPORTSBOOKS:
-            return 'pikkit'
-        
-        # Check OddsJam sportsbooks
-        if normalized_sb in UnifiedBetMapper.ODDSJAM_SPORTSBOOKS:
-            return 'oddsjam'
-        
-        # Default fallback logic for unmapped sportsbooks
-        # You can adjust this based on your preference
-        return 'oddsjam'  # Default to OddsJam for unknown sportsbooks
-
-
-# Example usage and testing
-if __name__ == "__main__":
-    # Test OddsJam mapping
-    oddsjam_example = {
-        'id': 1,
-        'sportsbook': 'Novig',
-        'sport': 'baseball',
-        'league': 'MLB',
-        'event_name': 'Chicago Cubs vs Cincinnati Reds',
-        'market_name': 'Player Walks',
-        'bet_name': 'Hunter Greene Over 1.5',
-        'odds': 118,
-        'clv': 119,
-        'stake': 30,
-        'bet_profit': 35.4,
-        'status': 'won',
-        'bet_type': 'normal',
-        'created_at': '05/23/2025, 09:41 EDT',
-    }
-    
-    # Test Pikkit mapping
-    pikkit_example = {
-        'id': 1,
-        'bet_id': 'f3283aa5-2229-4ff9-81ea-c5093b98ccfd',
-        'sportsbook': 'ProphetX',
-        'type': 'straight',
-        'status': 'SETTLED_WIN',
-        'odds': 1.79,
-        'amount': 7.5,
-        'profit': 5.92,
-        'bet_info': 'under 14.5 Bryce Thompson Total Points Cincinnati Bearcats at Oklahoma State Cowboys',
-        'sports': 'Basketball',
-        'leagues': 'NCAAM',
-        'time_placed': '03/11/2025 15:52:19 GMT',
-    }
-    
-    mapper = UnifiedBetMapper()
-    
-    print("OddsJam mapped:")
-    print(mapper.map_oddsjam_to_unified(oddsjam_example))
-    print("\nPikkit mapped:")
-    print(mapper.map_pikkit_to_unified(pikkit_example))
+        return True, "Valid"

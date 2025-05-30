@@ -4,7 +4,7 @@ import LoadingSpinner from "../components/LoadingSpinner";
 
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5007';
 
-// Types (keeping your existing types)
+// Types
 interface UnifiedBet {
   source: "oddsjam" | "pikkit";
   original_id: number;
@@ -67,19 +67,80 @@ interface DailyData {
   profit: number;
   cumulative: number;
   settled_bets: number;
+  oddsjam_profit: number;
+  pikkit_profit: number;
+  oddsjam_bets: number;
+  pikkit_bets: number;
 }
 
 interface CalendarDay {
-  date: number;
+  date: string;
   profit: number;
+  bet_count: number;
   isCurrentMonth: boolean;
   isToday: boolean;
 }
 
-// Past Week Chart Component
-const PastWeekChart: React.FC<{ dailyData: DailyData[] }> = ({ dailyData }) => {
-  console.log("PastWeekChart received dailyData:", dailyData);
-  
+// Optimized Past Week Chart Component
+const PastWeekChart: React.FC<{ isLoading: boolean }> = ({ isLoading }) => {
+  const [dailyData, setDailyData] = useState<DailyData[]>([]);
+  const [chartLoading, setChartLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchDailyData();
+  }, []);
+
+  const fetchDailyData = async () => {
+    try {
+      setChartLoading(true);
+      const response = await fetch(`${API_URL}/api/unified-daily-data?days=7`);
+      const data = await response.json();
+
+      if (response.ok) {
+        console.log("Daily data received:", data);
+        setDailyData(data.daily_data || []);
+      } else {
+        setError(data.error || "Failed to load chart data");
+      }
+    } catch (err) {
+      console.error("Error fetching daily data:", err);
+      setError("Failed to load chart data");
+    } finally {
+      setChartLoading(false);
+    }
+  };
+
+  if (chartLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Past Week</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-12">
+            <LoadingSpinner size="medium" message="Loading chart..." />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Past Week</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-12">
+            <div className="text-red-500">Error: {error}</div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   if (!dailyData || dailyData.length === 0) {
     return (
       <Card>
@@ -88,7 +149,7 @@ const PastWeekChart: React.FC<{ dailyData: DailyData[] }> = ({ dailyData }) => {
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-center py-12">
-            <div className="text-gray-500">Loading chart data...</div>
+            <div className="text-gray-500">No data available for the past week</div>
           </div>
         </CardContent>
       </Card>
@@ -97,7 +158,7 @@ const PastWeekChart: React.FC<{ dailyData: DailyData[] }> = ({ dailyData }) => {
 
   const maxProfit = Math.max(...dailyData.map(d => d.cumulative));
   const minProfit = Math.min(...dailyData.map(d => d.cumulative));
-  const range = maxProfit - minProfit || 1000; // Fallback to avoid division by zero
+  const range = Math.max(maxProfit - minProfit, 100); // Minimum range of 100
   
   const height = 200;
   const width = 600;
@@ -108,7 +169,7 @@ const PastWeekChart: React.FC<{ dailyData: DailyData[] }> = ({ dailyData }) => {
   };
 
   const getX = (index: number) => {
-    return padding + (index / (dailyData.length - 1)) * (width - 2 * padding);
+    return padding + (index / Math.max(dailyData.length - 1, 1)) * (width - 2 * padding);
   };
 
   const pathData = dailyData.map((point, index) => {
@@ -129,7 +190,7 @@ const PastWeekChart: React.FC<{ dailyData: DailyData[] }> = ({ dailyData }) => {
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
-            <CardTitle>Past Week</CardTitle>
+            <CardTitle>Past Week Performance</CardTitle>
             <div className="flex items-center gap-4 mt-2">
               <div className="text-3xl font-bold">
                 {formatMoney(currentValue)}
@@ -139,8 +200,11 @@ const PastWeekChart: React.FC<{ dailyData: DailyData[] }> = ({ dailyData }) => {
               </div>
             </div>
           </div>
-          <button className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm">
-            Share to X
+          <button 
+            onClick={fetchDailyData}
+            className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300"
+          >
+            Refresh
           </button>
         </div>
       </CardHeader>
@@ -219,7 +283,7 @@ const PastWeekChart: React.FC<{ dailyData: DailyData[] }> = ({ dailyData }) => {
             <span className="text-green-500 font-medium">
               {dailyData.reduce((sum, d) => sum + d.settled_bets, 0)} settled
             </span>
-            {' '}bets and you are{' '}
+            {' '}bets this week and you are{' '}
             <span className={`font-medium ${currentValue >= 0 ? 'text-green-500' : 'text-red-500'}`}>
               {currentValue >= 0 ? 'up' : 'down'} {formatMoney(Math.abs(currentValue))}
             </span>
@@ -230,19 +294,51 @@ const PastWeekChart: React.FC<{ dailyData: DailyData[] }> = ({ dailyData }) => {
   );
 };
 
-// Calendar Component
-const CalendarView: React.FC<{ allBets: UnifiedBet[] }> = ({ allBets }) => {
+// Optimized Calendar Component
+const CalendarView: React.FC = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
-  const [calendarData, setCalendarData] = useState<CalendarDay[]>([]);
+  const [calendarData, setCalendarData] = useState<{ [key: string]: { profit: number; bet_count: number } }>({});
+  const [calendarLoading, setCalendarLoading] = useState<boolean>(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    if (allBets.length > 0) {
-      console.log(`Calendar generating data from ${allBets.length} bets`);
-      generateCalendarData();
-    }
-  }, [currentDate, allBets]); // Watch allBets instead of bets
+    fetchCalendarData();
+  }, [currentDate]);
 
-  const generateCalendarData = () => {
+  const fetchCalendarData = async () => {
+    try {
+      setCalendarLoading(true);
+      const year = currentDate.getFullYear();
+      const month = currentDate.getMonth() + 1;
+      
+      const response = await fetch(`${API_URL}/api/unified-calendar-data?year=${year}&month=${month}`);
+      const data = await response.json();
+
+      if (response.ok) {
+        console.log("Calendar data received:", data);
+        
+        // Convert array to object for easy lookup
+        const dataMap: { [key: string]: { profit: number; bet_count: number } } = {};
+        (data.calendar_data || []).forEach((day: any) => {
+          dataMap[day.date] = {
+            profit: day.profit,
+            bet_count: day.bet_count
+          };
+        });
+        
+        setCalendarData(dataMap);
+      } else {
+        setError(data.error || "Failed to load calendar data");
+      }
+    } catch (err) {
+      console.error("Error fetching calendar data:", err);
+      setError("Failed to load calendar data");
+    } finally {
+      setCalendarLoading(false);
+    }
+  };
+
+  const generateCalendarDays = (): CalendarDay[] => {
     const year = currentDate.getFullYear();
     const month = currentDate.getMonth();
     const today = new Date();
@@ -255,40 +351,24 @@ const CalendarView: React.FC<{ allBets: UnifiedBet[] }> = ({ allBets }) => {
     
     const days: CalendarDay[] = [];
     
-    // Calculate daily profits from ALL bets (use allBets, not bets)
-    const dailyProfits: { [key: string]: number } = {};
-    
-    // Use allBets for the calendar calculation - this contains ALL bets
-    allBets.forEach(bet => {
-      // Use settled bets only for calendar display
-      if (bet.status !== 'pending') {
-        const betDate = bet.time_settled ? new Date(bet.time_settled) : new Date(bet.time_placed || '');
-        const dateKey = betDate.toDateString();
-        
-        if (!dailyProfits[dateKey]) {
-          dailyProfits[dateKey] = 0;
-        }
-        dailyProfits[dateKey] += bet.bet_profit;
-      }
-    });
-    
     // Generate 42 days (6 weeks) for calendar grid
     for (let i = 0; i < 42; i++) {
       const currentDay = new Date(startDate);
       currentDay.setDate(startDate.getDate() + i);
       
-      const dateKey = currentDay.toDateString();
-      const profit = dailyProfits[dateKey] || 0;
+      const dateKey = currentDay.toISOString().split('T')[0];
+      const dayData = calendarData[dateKey];
       
       days.push({
-        date: currentDay.getDate(),
-        profit,
+        date: dateKey,
+        profit: dayData?.profit || 0,
+        bet_count: dayData?.bet_count || 0,
         isCurrentMonth: currentDay.getMonth() === month,
         isToday: currentDay.toDateString() === today.toDateString()
       });
     }
     
-    setCalendarData(days);
+    return days;
   };
 
   const formatMoney = (amount: number) => {
@@ -306,19 +386,17 @@ const CalendarView: React.FC<{ allBets: UnifiedBet[] }> = ({ allBets }) => {
     setCurrentDate(newDate);
   };
 
-  const totalProfit = calendarData
-    .filter(day => day.isCurrentMonth)
-    .reduce((sum, day) => sum + day.profit, 0);
-
   const getDayClassName = (day: CalendarDay) => {
-    let className = "p-2 rounded-lg text-center transition-colors ";
+    let className = "p-2 rounded-lg text-center transition-colors min-h-[60px] flex flex-col justify-between ";
     
     if (!day.isCurrentMonth) {
-      className += "text-gray-400 ";
+      className += "text-gray-400 bg-gray-50 ";
     } else if (day.profit > 0) {
-      className += "bg-green-600 text-white ";
+      className += "bg-green-100 text-green-800 border border-green-200 ";
     } else if (day.profit < 0) {
-      className += "bg-red-600 text-white ";
+      className += "bg-red-100 text-red-800 border border-red-200 ";
+    } else if (day.bet_count > 0) {
+      className += "bg-yellow-50 text-yellow-800 border border-yellow-200 ";
     } else {
       className += "text-gray-600 hover:bg-gray-100 ";
     }
@@ -329,6 +407,41 @@ const CalendarView: React.FC<{ allBets: UnifiedBet[] }> = ({ allBets }) => {
     
     return className;
   };
+
+  const calendarDays = generateCalendarDays();
+  const totalProfit = calendarDays
+    .filter(day => day.isCurrentMonth)
+    .reduce((sum, day) => sum + day.profit, 0);
+
+  if (calendarLoading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Monthly Calendar</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-12">
+            <LoadingSpinner size="medium" message="Loading calendar..." />
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (error) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>Monthly Calendar</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-12">
+            <div className="text-red-500">Error: {error}</div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -344,9 +457,6 @@ const CalendarView: React.FC<{ allBets: UnifiedBet[] }> = ({ allBets }) => {
             <div>
               <CardTitle className="flex items-center gap-2">
                 {getMonthName()}
-                <button className="text-sm bg-gray-100 px-2 py-1 rounded">
-                  ▼
-                </button>
               </CardTitle>
             </div>
             <button
@@ -375,12 +485,17 @@ const CalendarView: React.FC<{ allBets: UnifiedBet[] }> = ({ allBets }) => {
           ))}
           
           {/* Calendar days */}
-          {calendarData.map((day, index) => (
+          {calendarDays.map((day, index) => (
             <div key={index} className={getDayClassName(day)}>
-              <div className="font-semibold">{day.date}</div>
+              <div className="font-semibold">{new Date(day.date).getDate()}</div>
               {day.profit !== 0 && (
                 <div className="text-xs mt-1">
                   {formatMoney(day.profit)}
+                </div>
+              )}
+              {day.bet_count > 0 && (
+                <div className="text-xs opacity-70">
+                  {day.bet_count} bet{day.bet_count !== 1 ? 's' : ''}
                 </div>
               )}
             </div>
@@ -391,11 +506,9 @@ const CalendarView: React.FC<{ allBets: UnifiedBet[] }> = ({ allBets }) => {
   );
 };
 
-export default function EnhancedCombinedHistoryPage() {
+export default function OptimizedCombinedHistoryPage() {
   const [bets, setBets] = useState<UnifiedBet[]>([]);
-  const [allBets, setAllBets] = useState<UnifiedBet[]>([]); // For calendar calculations
   const [stats, setStats] = useState<UnifiedStats | null>(null);
-  const [dailyData, setDailyData] = useState<DailyData[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [currentPage, setCurrentPage] = useState<number>(1);
@@ -406,29 +519,17 @@ export default function EnhancedCombinedHistoryPage() {
   const [filterSportsbook, setFilterSportsbook] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
 
-  // Fetch unified data
+  // Fetch main data (bets and stats) - optimized to not fetch chart data
   useEffect(() => {
-    fetchUnifiedData();
+    fetchMainData();
   }, [currentPage, pageSize, filterSportsbook, filterStatus, filterSource]);
-
-  // Fetch all bets for calendar and chart calculations - separate from pagination
-  useEffect(() => {
-    fetchAllBetsForCharts();
-  }, []);
 
   // Fetch stats once on mount
   useEffect(() => {
     fetchUnifiedStats();
   }, []);
 
-  // Generate chart data when allBets is loaded
-  useEffect(() => {
-    if (allBets.length > 0) {
-      generateDailyData();
-    }
-  }, [allBets]);
-
-  const fetchUnifiedData = async () => {
+  const fetchMainData = async () => {
     setIsLoading(true);
     setError(null);
 
@@ -458,96 +559,6 @@ export default function EnhancedCombinedHistoryPage() {
     }
 
     setIsLoading(false);
-  };
-
-  const fetchAllBetsForCharts = async () => {
-    try {
-      console.log("Starting to fetch all bets for charts...");
-      
-      // Fetch ALL bets for calendar and chart calculations
-      let allBetsData: UnifiedBet[] = [];
-      let currentPage = 1;
-      let totalPages = 1;
-      
-      do {
-        const params = new URLSearchParams({
-          page: currentPage.toString(),
-          per_page: "50", // Smaller chunks to be faster
-        });
-
-        console.log(`Fetching page ${currentPage}...`);
-        const response = await fetch(`${API_URL}/api/unified-bets?${params}`);
-        const data = await response.json();
-
-        if (response.ok) {
-          allBetsData = [...allBetsData, ...(data.items || [])];
-          totalPages = data.pages || 1;
-          currentPage++;
-          
-          // Safety break - don't fetch more than 500 bets for now
-          if (allBetsData.length >= 500) {
-            console.log("Limiting to 500 bets for performance");
-            break;
-          }
-        } else {
-          console.error("Error fetching page:", data);
-          break;
-        }
-      } while (currentPage <= totalPages && currentPage <= 10); // Max 10 pages
-
-      console.log(`Fetched ${allBetsData.length} total bets for calendar and charts`);
-      setAllBets(allBetsData);
-    } catch (err) {
-      console.error("Error fetching all bets for charts:", err);
-    }
-  };
-
-  const generateDailyData = (betsData: UnifiedBet[]) => {
-    // Generate last 7 days of data for the chart
-    const today = new Date();
-    const last7Days: DailyData[] = [];
-    
-    // Get all settled bets for calculating the starting balance before our 7-day window
-    const allSettledBets = betsData.filter(bet => bet.status !== 'pending');
-    
-    for (let i = 6; i >= 0; i--) {
-      const date = new Date(today);
-      date.setDate(date.getDate() - i);
-      const dateStr = date.toISOString().split('T')[0];
-      
-      // Calculate daily profit for this specific date
-      const dayBets = allSettledBets.filter(bet => {
-        const betDate = bet.time_settled ? new Date(bet.time_settled) : new Date(bet.time_placed || '');
-        return betDate.toISOString().split('T')[0] === dateStr;
-      });
-      
-      const dailyProfit = dayBets.reduce((sum, bet) => sum + bet.bet_profit, 0);
-      const settledBets = dayBets.length;
-      
-      last7Days.push({
-        date: dateStr,
-        profit: dailyProfit,
-        cumulative: 0, // Will calculate cumulative below
-        settled_bets: settledBets
-      });
-    }
-    
-    // Calculate cumulative profits starting from all bets before our 7-day window
-    const startingBalance = allSettledBets
-      .filter(bet => {
-        const betDate = bet.time_settled ? new Date(bet.time_settled) : new Date(bet.time_placed || '');
-        return betDate < new Date(last7Days[0].date);
-      })
-      .reduce((sum, bet) => sum + bet.bet_profit, 0);
-    
-    let runningTotal = startingBalance;
-    
-    last7Days.forEach(day => {
-      runningTotal += day.profit;
-      day.cumulative = runningTotal;
-    });
-    
-    setDailyData(last7Days);
   };
 
   const fetchUnifiedStats = async () => {
@@ -629,8 +640,8 @@ export default function EnhancedCombinedHistoryPage() {
           <button
             onClick={() => {
               setCurrentPage(1);
-              fetchUnifiedData();
-              fetchAllBetsForCharts();
+              fetchMainData();
+              fetchUnifiedStats();
             }}
             className="p-2 rounded-full hover:bg-gray-200"
             title="Refresh data"
@@ -640,16 +651,15 @@ export default function EnhancedCombinedHistoryPage() {
         </div>
       </div>
 
-      {/* Visual Analytics Section */}
+      {/* Visual Analytics Section - Now loading independently */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Past Week Chart */}
-        <PastWeekChart dailyData={dailyData} />
+        {/* Past Week Chart - loads independently */}
+        <PastWeekChart isLoading={isLoading} />
         
-        {/* Calendar View */}
-        <CalendarView allBets={allBets} />
+        {/* Calendar View - loads independently */}
+        <CalendarView />
       </div>
 
-      {/* Rest of your existing components */}
       {/* Unified System Overview */}
       {stats && (
         <Card>
@@ -832,7 +842,7 @@ export default function EnhancedCombinedHistoryPage() {
               <button
                 onClick={() => {
                   setCurrentPage(1);
-                  fetchUnifiedData();
+                  fetchMainData();
                 }}
                 className="w-full px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
               >
