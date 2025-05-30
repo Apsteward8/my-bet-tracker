@@ -1,8 +1,9 @@
-// pages/ConfirmPage.tsx (with responsive updates)
+// frontend/src/pages/ConfirmPage.tsx (updated with enhanced sync)
 import { useEffect, useState } from "react";
 import axios from "axios";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import LoadingSpinner from "../components/LoadingSpinner";
+import EnhancedSyncButton from "../components/EnhancedSyncButton";
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5007';
 
 interface Bet {
@@ -27,12 +28,8 @@ export default function ConfirmPage() {
   const [statusOptions, setStatusOptions] = useState<string[]>([]);
   const [sortColumn, setSortColumn] = useState<string>("id");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
-  
-  // Add sync state
-  const [isSyncing, setIsSyncing] = useState<boolean>(false);
-  const [syncMessage, setSyncMessage] = useState<{text: string, type: "success" | "error"} | null>(null);
 
-  // Fetch unconfirmed settled bets
+  // Fetch unconfirmed settled bets (now automatically excludes Pikkit sportsbooks)
   const fetchBets = async () => {
     setIsLoading(true);
     setError(null);
@@ -58,7 +55,6 @@ export default function ConfirmPage() {
     } catch (err: any) {
       console.error("Error fetching unconfirmed bets:", err);
       
-      // Extract more specific error message if available
       const errorMessage = err.response?.data?.error || 
                            "Failed to load unconfirmed bets. Please try again later.";
       
@@ -77,7 +73,7 @@ export default function ConfirmPage() {
     try {
       await axios.put(
         `${API_URL}/api/bets/${betId}/confirm`,
-        {}, // Empty object as the data payload
+        {},
         {
           headers: {
             'Content-Type': 'application/json'
@@ -89,7 +85,6 @@ export default function ConfirmPage() {
     } catch (err: any) {
       console.error(`Error confirming bet ${betId}:`, err);
       
-      // Extract more specific error message if available
       const errorMessage = err.response?.data?.error || 
                            "Failed to confirm bet. Please try again.";
       
@@ -97,53 +92,17 @@ export default function ConfirmPage() {
     }
   };
 
-  // Handle sync button click
-  const handleSync = async () => {
-    setIsSyncing(true);
-    setSyncMessage(null);
-    
-    try {
-      const response = await axios.post(
-        `${API_URL}/api/bets/sync`,
-        {},
-        {
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        }
-      );
-      
-      setSyncMessage({
-        text: "Sync completed successfully! Refreshing data...",
-        type: "success"
-      });
-      
-      // Refresh the bets list
-      await fetchBets();
-      
-    } catch (err: any) {
-      console.error("Error syncing bets:", err);
-      
-      // Extract more specific error message if available
-      const errorMessage = err.response?.data?.error || 
-                          "Failed to sync bets. Please try again.";
-      
-      setSyncMessage({
-        text: errorMessage,
-        type: "error"
-      });
-    } finally {
-      setIsSyncing(false);
-    }
+  // Handle sync completion
+  const handleSyncComplete = () => {
+    // Refresh the bets list after sync
+    fetchBets();
   };
 
   // Add sort function
   const handleSort = (column: string) => {
-    // If clicking the same column, toggle direction
     if (sortColumn === column) {
       setSortDirection(sortDirection === "asc" ? "desc" : "asc");
     } else {
-      // New column, default to descending
       setSortColumn(column);
       setSortDirection("desc");
     }
@@ -151,23 +110,19 @@ export default function ConfirmPage() {
 
   // Apply filters and sorting
   const sortedAndFilteredBets = () => {
-    // First apply filters
     const filtered = bets.filter(bet => {
       const statusMatch = selectedStatus === "All" || bet.status === selectedStatus;
       const sportsbookMatch = selectedSportsbook === "All" || bet.sportsbook === selectedSportsbook;
       return statusMatch && sportsbookMatch;
     });
     
-    // Then sort the filtered bets
     return [...filtered].sort((a, b) => {
       const valueA = a[sortColumn as keyof Bet];
       const valueB = b[sortColumn as keyof Bet];
       
-      // Handle different types of values
       if (typeof valueA === 'number' && typeof valueB === 'number') {
         return sortDirection === "asc" ? valueA - valueB : valueB - valueA;
       } else {
-        // Convert to string for string comparison
         const strA = String(valueA).toLowerCase();
         const strB = String(valueB).toLowerCase();
         return sortDirection === "asc" 
@@ -177,7 +132,6 @@ export default function ConfirmPage() {
     });
   };
 
-  // Get the sorted and filtered bets
   const displayBets = sortedAndFilteredBets();
 
   // Format money values
@@ -265,29 +219,13 @@ export default function ConfirmPage() {
             {displayBets.length} bets need confirmation
           </span>
           
-          {/* Sync button */}
-          <button
-            onClick={handleSync}
-            disabled={isSyncing}
-            className={`px-3 py-1.5 rounded text-white flex items-center gap-1 text-sm ${
-              isSyncing ? "bg-gray-400 cursor-not-allowed" : "bg-blue-600 hover:bg-blue-700"
-            }`}
-            title="Sync bets from CSV file"
-          >
-            {isSyncing ? (
-              <>
-                <svg className="animate-spin -ml-1 mr-2 h-4 w-4 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-                </svg>
-                Syncing...
-              </>
-            ) : (
-              <>
-                🔄 Sync
-              </>
-            )}
-          </button>
+          {/* Enhanced Sync button */}
+          <EnhancedSyncButton 
+            onSyncComplete={handleSyncComplete}
+            variant="button"
+            size="medium"
+            showLabel={true}
+          />
           
           <button
             onClick={() => window.location.reload()}
@@ -299,17 +237,37 @@ export default function ConfirmPage() {
         </div>
       </div>
 
-      {/* Display sync message if any */}
-      {syncMessage && (
-        <div className={`${
-          syncMessage.type === "success" ? "bg-green-50 border-green-200 text-green-800" : "bg-red-50 border-red-200 text-red-800"
-        } rounded-lg p-4 mb-4 border flex items-center`}>
-          <div className="mr-2 text-lg">
-            {syncMessage.type === "success" ? "✅" : "❌"}
+      {/* Information about filtering */}
+      <Card>
+        <CardHeader>
+          <CardTitle>Smart Confirmation System</CardTitle>
+          <CardDescription>
+            Only showing bets that require manual confirmation
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="bg-blue-50 p-4 rounded-lg">
+            <h4 className="font-medium text-blue-900 mb-2">🔍 Automatic Filtering</h4>
+            <p className="text-blue-800 text-sm mb-3">
+              Bets from Pikkit-tracked sportsbooks are automatically verified and don't appear here since they're directly synced from the sportsbooks.
+            </p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+              <div>
+                <h5 className="font-medium text-blue-900 mb-1">🏛️ Auto-Verified (Pikkit)</h5>
+                <div className="text-blue-700 text-xs">
+                  BetMGM, Caesars, DraftKings, ESPN BET, FanDuel, Novig, ProphetX, etc.
+                </div>
+              </div>
+              <div>
+                <h5 className="font-medium text-blue-900 mb-1">📋 Requires Confirmation (OddsJam)</h5>
+                <div className="text-blue-700 text-xs">
+                  BetOnline, BookMaker, Bovada, Heritage Sports, etc.
+                </div>
+              </div>
+            </div>
           </div>
-          <p className="text-sm md:text-base">{syncMessage.text}</p>
-        </div>
-      )}
+        </CardContent>
+      </Card>
 
       {/* Display error message if any */}
       {error && (
@@ -332,7 +290,7 @@ export default function ConfirmPage() {
               <div className="text-5xl mb-4">🎉</div>
               <h2 className="text-xl font-semibold text-gray-700 mb-2">All Caught Up!</h2>
               <p className="text-gray-500 text-center max-w-md">
-                No bets need confirmation at this time.
+                No bets need confirmation at this time. All Pikkit-tracked bets are automatically verified!
               </p>
             </div>
           </CardContent>

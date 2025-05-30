@@ -1,19 +1,20 @@
 // Handle filter checkbox changes
 const handleFilterChange = (type: 'pending' | 'props', checked: boolean) => {
-    console.log(`Changing ${type} filter to: ${checked}`);
-    
-    if (type === 'pending') {
-      setIncludePendingBets(checked);
-    } else {
-      setIncludePlayerProps(checked);
-    }
-    
-    // We'll fetch data when the user clicks "Apply Filters" instead of automatically
-  };import { useEffect, useState, useCallback } from "react";
+  console.log(`Changing ${type} filter to: ${checked}`);
+
+  if (type === 'pending') {
+    setIncludePendingBets(checked);
+  } else {
+    setIncludePlayerProps(checked);
+  }
+
+  // We'll fetch data when the user clicks "Apply Filters" instead of automatically
+}; import { useEffect, useState, useCallback } from "react";
 import axios from "axios";
 import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "../components/ui/Card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../components/ui/Tabs";
 import LoadingSpinner from "../components/LoadingSpinner";
+import EnhancedSyncButton from "../components/EnhancedSyncButton";
 const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5007';
 
 // ===== Types =====
@@ -31,7 +32,7 @@ interface ProcessedBet {
   event_start_date: string;
   sport?: string | null;
   market_name?: string | null;
-  
+
   // Potentially null for bets without valid CLV
   implied_prob: number | null;
   clv_implied_prob: number | null;
@@ -75,13 +76,13 @@ interface DateRange {
 }
 
 // ===== BetDetailModal Component =====
-const BetDetailModal = ({ 
-  bet, 
-  isOpen, 
-  onClose, 
-  formatMoney, 
-  formatPercent, 
-  getColorClass 
+const BetDetailModal = ({
+  bet,
+  isOpen,
+  onClose,
+  formatMoney,
+  formatPercent,
+  getColorClass
 }) => {
   if (!isOpen || !bet) return null;
 
@@ -92,12 +93,12 @@ const BetDetailModal = ({
   };
 
   return (
-    <div 
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4" 
+    <div
+      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4"
       style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, zIndex: 1000 }}
       onClick={() => onClose()}
     >
-      <div 
+      <div
         className="bg-white rounded-lg shadow-xl max-w-3xl w-full max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()} // Prevent closing when clicking inside
       >
@@ -105,7 +106,7 @@ const BetDetailModal = ({
         <div className="p-6 border-b border-gray-200">
           <div className="flex justify-between items-center">
             <h2 className="text-2xl font-bold text-gray-800">{bet.bet_name}</h2>
-            <button 
+            <button
               onClick={() => onClose()}
               className="text-gray-500 hover:text-gray-700 text-xl"
             >
@@ -163,10 +164,10 @@ const BetDetailModal = ({
                     <td className="py-2 text-gray-600">Status:</td>
                     <td className="py-2">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium 
-                        ${bet.status === 'won' ? 'bg-green-100 text-green-800' : 
-                          bet.status === 'lost' ? 'bg-red-100 text-red-800' : 
-                          bet.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 
-                          'bg-gray-100 text-gray-800'}`
+                        ${bet.status === 'won' ? 'bg-green-100 text-green-800' :
+                          bet.status === 'lost' ? 'bg-red-100 text-red-800' :
+                            bet.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                              'bg-gray-100 text-gray-800'}`
                       }>
                         {bet.status}
                       </span>
@@ -186,7 +187,7 @@ const BetDetailModal = ({
           {/* Expected value analysis */}
           <div className="mb-8">
             <h3 className="text-lg font-semibold mb-4 text-gray-800">Expected Value Analysis</h3>
-            
+
             <div className="bg-gray-50 p-4 rounded-lg mb-4">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div className="text-center p-3 bg-white rounded shadow">
@@ -195,14 +196,14 @@ const BetDetailModal = ({
                     {bet.ev_percent !== null ? formatPercent(bet.ev_percent * 100) : "N/A"}
                   </p>
                 </div>
-                
+
                 <div className="text-center p-3 bg-white rounded shadow">
                   <p className="text-gray-500 text-sm mb-1">Expected Profit</p>
                   <p className={`text-xl font-bold ${getColorClass(bet.expected_profit)}`}>
                     {formatMoney(bet.expected_profit)}
                   </p>
                 </div>
-                
+
                 <div className="text-center p-3 bg-white rounded shadow">
                   <p className="text-gray-500 text-sm mb-1">CLV</p>
                   <p className={`text-xl font-bold ${getColorClass(bet.clv)}`}>
@@ -211,7 +212,7 @@ const BetDetailModal = ({
                 </div>
               </div>
             </div>
-            
+
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
               <table className="w-full">
                 <tbody>
@@ -230,9 +231,9 @@ const BetDetailModal = ({
                   <tr>
                     <td className="py-2 text-gray-600">Beat Closing Line?</td>
                     <td className="py-2 font-medium">
-                      {bet.beat_clv === null ? "N/A" : 
-                        bet.beat_clv ? 
-                          <span className="text-green-600">Yes</span> : 
+                      {bet.beat_clv === null ? "N/A" :
+                        bet.beat_clv ?
+                          <span className="text-green-600">Yes</span> :
                           <span className="text-red-600">No</span>
                       }
                     </td>
@@ -241,10 +242,10 @@ const BetDetailModal = ({
                     <td className="py-2 text-gray-600">EV Quality:</td>
                     <td className="py-2">
                       <span className={`px-2 py-1 rounded-full text-xs font-medium 
-                        ${bet.ev_category === 'High EV' ? 'bg-green-100 text-green-800' : 
-                          bet.ev_category === 'Medium EV' ? 'bg-yellow-100 text-yellow-800' : 
-                          bet.ev_category === 'Low EV' ? 'bg-blue-100 text-blue-800' :
-                          'bg-gray-100 text-gray-800'}`
+                        ${bet.ev_category === 'High EV' ? 'bg-green-100 text-green-800' :
+                          bet.ev_category === 'Medium EV' ? 'bg-yellow-100 text-yellow-800' :
+                            bet.ev_category === 'Low EV' ? 'bg-blue-100 text-blue-800' :
+                              'bg-gray-100 text-gray-800'}`
                       }>
                         {bet.ev_category}
                       </span>
@@ -261,7 +262,7 @@ const BetDetailModal = ({
                 <div className="bg-blue-50 p-3 rounded text-sm text-blue-800 font-mono mb-3">
                   EV% = (CLV implied probability / odds implied probability) - 1
                 </div>
-                
+
                 <h4 className="font-medium text-gray-700 mb-2">Expected Profit</h4>
                 <p className="text-sm text-gray-600 mb-2">
                   Expected profit is calculated based on your stake and the EV%:
@@ -308,13 +309,13 @@ export default function EVAnalysisPage() {
   const [sortColumn, setSortColumn] = useState<string>("event_start_date");
   const [sortDirection, setSortDirection] = useState<"asc" | "desc">("desc");
   const [dateFilterType, setDateFilterType] = useState<string>("custom");
-  
+
   // Modal state
   const [selectedBet, setSelectedBet] = useState<ProcessedBet | null>(null);
   const [isModalOpen, setIsModalOpen] = useState<boolean>(false);
 
   // ===== Formatting Helper Functions =====
-  
+
   // Format date for input field (YYYY-MM-DD)
   const formatDateForInput = (date: Date): string => {
     const year = date.getFullYear();
@@ -352,23 +353,23 @@ export default function EVAnalysisPage() {
   };
 
   // ===== Modal Handlers =====
-  
+
   // Open modal with selected bet
   const openBetModal = (bet: ProcessedBet) => {
     console.log("Opening modal for bet:", bet.id);
     setSelectedBet(bet);
     setIsModalOpen(true);
   };
-  
+
   // Close modal
   const closeBetModal = () => {
     console.log("Closing modal");
     setIsModalOpen(false);
     setTimeout(() => setSelectedBet(null), 300);
   };
-  
+
   // ===== Sorting Functions =====
-  
+
   // Sort bets based on current sort column and direction
   const sortBets = (bets: ProcessedBet[]): ProcessedBet[] => {
     return [...bets].sort((a, b) => {
@@ -389,8 +390,8 @@ export default function EVAnalysisPage() {
         // String comparison for text columns
         const valA = String(a[sortColumn] || "").toLowerCase();
         const valB = String(b[sortColumn] || "").toLowerCase();
-        return sortDirection === "asc" 
-          ? valA.localeCompare(valB) 
+        return sortDirection === "asc"
+          ? valA.localeCompare(valB)
           : valB.localeCompare(valA);
       }
     });
@@ -409,64 +410,64 @@ export default function EVAnalysisPage() {
   };
 
   // ===== Date Range Handling =====
-  
+
   // Preset date range options
   const getPresetDateRange = (type: string): DateRange => {
     const today = new Date();
     const todayStr = formatDateForInput(today);
-    
+
     switch (type) {
       case "all":
         return { start: "", end: "" };
-      
+
       case "ytd": {
         // Year to date
         const startOfYear = new Date(today.getFullYear(), 0, 1);
-        return { 
-          start: formatDateForInput(startOfYear), 
-          end: todayStr 
+        return {
+          start: formatDateForInput(startOfYear),
+          end: todayStr
         };
       }
-      
+
       case "month": {
         // Last 30 days
         const thirtyDaysAgo = new Date();
         thirtyDaysAgo.setDate(today.getDate() - 30);
-        return { 
-          start: formatDateForInput(thirtyDaysAgo), 
-          end: todayStr 
+        return {
+          start: formatDateForInput(thirtyDaysAgo),
+          end: todayStr
         };
       }
-      
+
       case "week": {
         // Last 7 days
         const sevenDaysAgo = new Date();
         sevenDaysAgo.setDate(today.getDate() - 7);
-        return { 
-          start: formatDateForInput(sevenDaysAgo), 
-          end: todayStr 
+        return {
+          start: formatDateForInput(sevenDaysAgo),
+          end: todayStr
         };
       }
-      
+
       case "yesterday": {
         // Yesterday
         const yesterday = new Date();
         yesterday.setDate(today.getDate() - 1);
         const yesterdayStr = formatDateForInput(yesterday);
-        return { 
-          start: yesterdayStr, 
-          end: yesterdayStr 
+        return {
+          start: yesterdayStr,
+          end: yesterdayStr
         };
       }
-      
+
       case "today": {
         // Today
-        return { 
-          start: todayStr, 
-          end: todayStr 
+        return {
+          start: todayStr,
+          end: todayStr
         };
       }
-      
+
       default:
         return { start: startDate, end: endDate };
     }
@@ -482,28 +483,28 @@ export default function EVAnalysisPage() {
     const newDate = e.target.value;
     setEndDate(newDate);
   };
-  
+
   // Handle date preset change with improved approach
   const handleDatePresetChange = (type: string) => {
     console.log("Changing date preset to:", type);
-    
+
     // Only proceed if this is a new selection
     if (type === dateFilterType && type !== "custom") return;
-    
+
     // Get date range for selected preset
     const dateRange = getPresetDateRange(type);
-    
+
     // Update filter type in state immediately
     setDateFilterType(type);
-    
+
     // For non-custom presets, set the dates and fetch data
     if (type !== "custom") {
       console.log("Setting date range:", dateRange);
-      
+
       // Update state first
       setStartDate(dateRange.start);
       setEndDate(dateRange.end);
-      
+
       // Then fetch using the direct values (not relying on state)
       fetchDataWithDates(dateRange.start, dateRange.end);
     } else {
@@ -512,20 +513,20 @@ export default function EVAnalysisPage() {
       setEndDate(dateRange.end);
     }
   };
-  
+
   // Helper function to fetch with specific dates
   const fetchDataWithDates = (start: string, end: string) => {
     console.log("Fetching with specific dates:", { start, end });
-    
+
     setIsLoading(true);
-    
+
     // Construct query parameters
     const params = new URLSearchParams();
     if (includePendingBets) params.append('include_pending', 'true');
     if (includePlayerProps) params.append('include_player_props', 'true');
     if (start) params.append('start_date', start);
     if (end) params.append('end_date', end);
-    
+
     axios.get(`${API_URL}/api/ev-analysis?${params.toString()}`)
       .then(response => {
         if (!response.data) {
@@ -536,10 +537,10 @@ export default function EVAnalysisPage() {
         }
 
         const { bets, stats, sportsbook_stats, sport_stats, ev_quality_stats } = response.data;
-        
+
         // Process and set all the data
         setFilteredBets(bets || []);
-        
+
         if (stats) {
           setStats({
             total_bets: stats.total_bets || 0,
@@ -558,7 +559,7 @@ export default function EVAnalysisPage() {
             total_analyzed_bets: stats.total_analyzed_bets || 0
           });
         }
-        
+
         // Process sportsbook stats
         const formattedSportsbookStats = (sportsbook_stats || []).map((sb: any) => ({
           name: sb.name || "",
@@ -571,7 +572,7 @@ export default function EVAnalysisPage() {
           avgEV: sb.avg_ev || 0
         }));
         setSportsbookStats(formattedSportsbookStats);
-        
+
         // Process sport stats
         const formattedSportStats = (sport_stats || []).map((sport: any) => ({
           name: sport.name || "",
@@ -584,7 +585,7 @@ export default function EVAnalysisPage() {
           avgEV: sport.avg_ev || 0
         }));
         setSportStats(formattedSportStats);
-        
+
         // Process EV quality stats
         const formattedEVQualityStats = (ev_quality_stats || []).map((ev: any) => ({
           name: ev.category || "",
@@ -597,7 +598,7 @@ export default function EVAnalysisPage() {
           avgEV: ev.avg_ev || 0
         }));
         setEVQualityStats(formattedEVQualityStats);
-        
+
         setIsLoading(false);
       })
       .catch(err => {
@@ -608,16 +609,16 @@ export default function EVAnalysisPage() {
   };
 
   // ===== Data Fetching =====
-  
+
   // Standalone fetch function (not using useCallback)
   const fetchEVAnalysisData = async () => {
-    console.log("Fetching EV analysis data with filters:", { 
-      includePendingBets, 
-      includePlayerProps, 
-      startDate, 
-      endDate 
+    console.log("Fetching EV analysis data with filters:", {
+      includePendingBets,
+      includePlayerProps,
+      startDate,
+      endDate
     });
-    
+
     setIsLoading(true);
     setError(null);
 
@@ -641,12 +642,12 @@ export default function EVAnalysisPage() {
       }
 
       // Handle response data
-      const { 
-        bets, 
-        stats, 
-        sportsbook_stats, 
-        sport_stats, 
-        ev_quality_stats 
+      const {
+        bets,
+        stats,
+        sportsbook_stats,
+        sport_stats,
+        ev_quality_stats
       } = response.data;
 
       // Process bets
@@ -656,7 +657,7 @@ export default function EVAnalysisPage() {
 
       // Set state with processed data
       setFilteredBets(processedBets);
-      
+
       // Convert snake_case stats to camelCase
       if (stats) {
         setStats({
@@ -730,7 +731,7 @@ export default function EVAnalysisPage() {
   };
 
   // ===== Effects =====
-  
+
   // Initial data fetch only (runs once)
   useEffect(() => {
     console.log("Initial data fetch");
@@ -759,7 +760,7 @@ export default function EVAnalysisPage() {
 
         const { bets, stats, sportsbook_stats, sport_stats, ev_quality_stats } = response.data;
         setFilteredBets(bets || []);
-        
+
         if (stats) {
           setStats({
             total_bets: stats.total_bets || 0,
@@ -821,12 +822,12 @@ export default function EVAnalysisPage() {
           const dates = bets.map((bet: { event_start_date: string | number | Date; }) => new Date(bet.event_start_date));
           const earliestDate = new Date(Math.min(...dates.map((d: { getTime: () => any; }) => d.getTime())));
           const latestDate = new Date(Math.max(...dates.map((d: { getTime: () => any; }) => d.getTime())));
-          
+
           if (!startDate) {
             const formattedStart = formatDateForInput(earliestDate);
             setStartDate(formattedStart);
           }
-          
+
           if (!endDate) {
             const formattedEnd = formatDateForInput(latestDate);
             setEndDate(formattedEnd);
@@ -845,7 +846,7 @@ export default function EVAnalysisPage() {
   }, []); // Empty dependency array - runs only once on mount
 
   // ===== Render Logic =====
-  
+
   // Loading state
   if (isLoading) {
     return <LoadingSpinner size="large" message="Loading EV analysis data..." />;
@@ -887,13 +888,29 @@ export default function EVAnalysisPage() {
           <span className="text-sm text-gray-500">
             Analyzing {stats.total_bets} bets ({stats.valid_clv_bets} with valid CLV)
           </span>
+          <EnhancedSyncButton
+            onSyncComplete={() => {
+              // Refetch data after sync completes
+              const preset = datePresets.find(p => p.key === activePreset);
+              if (preset) {
+                const range = preset.getRange();
+                fetchDataWithDates(range.start, range.end);
+              } else {
+                fetchEVAnalysisData();
+              }
+            }}
+            variant="icon"
+            size="medium"
+          />
+
+          {/* Regular refresh button
           <button
             onClick={() => window.location.reload()}
             className="p-2 rounded-full hover:bg-gray-200"
-            title="Refresh data"
+            title="Refresh page"
           >
             🔄
-          </button>
+          </button> */}
         </div>
       </div>
 
@@ -906,86 +923,79 @@ export default function EVAnalysisPage() {
         <CardContent>
           <div className="mb-6">
             <h3 className="text-sm font-medium text-gray-700 mb-2">Date Range</h3>
-            
+
             <div className="flex flex-wrap gap-2 mb-4">
               <button
                 onClick={() => handleDatePresetChange("all")}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  dateFilterType === "all" 
-                    ? "bg-blue-600 text-white" 
+                className={`px-3 py-1 text-sm rounded-md ${dateFilterType === "all"
+                    ? "bg-blue-600 text-white"
                     : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                  }`}
               >
                 All Time
               </button>
-              
+
               <button
                 onClick={() => handleDatePresetChange("ytd")}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  dateFilterType === "ytd" 
-                    ? "bg-blue-600 text-white" 
+                className={`px-3 py-1 text-sm rounded-md ${dateFilterType === "ytd"
+                    ? "bg-blue-600 text-white"
                     : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                  }`}
               >
                 Year to Date
               </button>
-              
+
               <button
                 onClick={() => handleDatePresetChange("month")}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  dateFilterType === "month" 
-                    ? "bg-blue-600 text-white" 
+                className={`px-3 py-1 text-sm rounded-md ${dateFilterType === "month"
+                    ? "bg-blue-600 text-white"
                     : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                  }`}
               >
                 Last 30 Days
               </button>
-              
+
               <button
                 onClick={() => handleDatePresetChange("week")}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  dateFilterType === "week" 
-                    ? "bg-blue-600 text-white" 
+                className={`px-3 py-1 text-sm rounded-md ${dateFilterType === "week"
+                    ? "bg-blue-600 text-white"
                     : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                  }`}
               >
                 Last 7 Days
               </button>
-              
+
               <button
                 onClick={() => handleDatePresetChange("yesterday")}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  dateFilterType === "yesterday" 
-                    ? "bg-blue-600 text-white" 
+                className={`px-3 py-1 text-sm rounded-md ${dateFilterType === "yesterday"
+                    ? "bg-blue-600 text-white"
                     : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                  }`}
               >
                 Yesterday
               </button>
-              
+
               <button
                 onClick={() => handleDatePresetChange("today")}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  dateFilterType === "today" 
-                    ? "bg-blue-600 text-white" 
+                className={`px-3 py-1 text-sm rounded-md ${dateFilterType === "today"
+                    ? "bg-blue-600 text-white"
                     : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                  }`}
               >
                 Today
               </button>
-              
+
               <button
                 onClick={() => handleDatePresetChange("custom")}
-                className={`px-3 py-1 text-sm rounded-md ${
-                  dateFilterType === "custom" 
-                    ? "bg-blue-600 text-white" 
+                className={`px-3 py-1 text-sm rounded-md ${dateFilterType === "custom"
+                    ? "bg-blue-600 text-white"
                     : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                }`}
+                  }`}
               >
                 Custom
               </button>
             </div>
-            
+
             {dateFilterType === "custom" && (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                 <div>
@@ -1006,10 +1016,10 @@ export default function EVAnalysisPage() {
                     className="w-full p-2 border border-gray-300 rounded"
                   />
                 </div>
-                
+
                 {/* Date filter apply button */}
                 <div className="md:col-span-2">
-                  <button 
+                  <button
                     onClick={applyDateFilters}
                     className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
                   >
@@ -1046,7 +1056,7 @@ export default function EVAnalysisPage() {
                 Include player prop bets
               </label>
             </div>
-            
+
             <button
               onClick={fetchEVAnalysisData}
               className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -1269,10 +1279,10 @@ export default function EVAnalysisPage() {
                     <tr key={ev.name}>
                       <td>
                         <span className={`px-2 py-1 rounded-full text-xs font-medium 
-                          ${ev.name === 'High EV' ? 'bg-green-100 text-green-800' : 
-                            ev.name === 'Medium EV' ? 'bg-yellow-100 text-yellow-800' : 
-                            ev.name === 'Low EV' ? 'bg-blue-100 text-blue-800' :
-                            'bg-gray-100 text-gray-800'}`
+                          ${ev.name === 'High EV' ? 'bg-green-100 text-green-800' :
+                            ev.name === 'Medium EV' ? 'bg-yellow-100 text-yellow-800' :
+                              ev.name === 'Low EV' ? 'bg-blue-100 text-blue-800' :
+                                'bg-gray-100 text-gray-800'}`
                         }>
                           {ev.name}
                         </span>
@@ -1350,7 +1360,7 @@ export default function EVAnalysisPage() {
                   .map((bet) => (
                     <tr key={bet.id}>
                       <td className="max-w-xs truncate text-left">
-                        <button 
+                        <button
                           onClick={() => openBetModal(bet)}
                           className="text-blue-600 hover:text-blue-800 hover:underline text-left font-medium focus:outline-none"
                           title="Click to view bet details"
@@ -1371,10 +1381,10 @@ export default function EVAnalysisPage() {
                       </td>
                       <td className="text-left">
                         <span className={`px-2 py-1 rounded-full text-xs font-medium 
-                          ${bet.status === 'won' ? 'bg-green-100 text-green-800' : 
-                            bet.status === 'lost' ? 'bg-red-100 text-red-800' : 
-                            bet.status === 'pending' ? 'bg-yellow-100 text-yellow-800' : 
-                            'bg-gray-100 text-gray-800'}`
+                          ${bet.status === 'won' ? 'bg-green-100 text-green-800' :
+                            bet.status === 'lost' ? 'bg-red-100 text-red-800' :
+                              bet.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                                'bg-gray-100 text-gray-800'}`
                         }>
                           {bet.status}
                         </span>
@@ -1392,7 +1402,7 @@ export default function EVAnalysisPage() {
               </tbody>
             </table>
           </div>
-          
+
           {/* Pagination controls */}
           {filteredBets.length > 0 && (
             <div className="p-4 border-t border-gray-200 flex items-center justify-between">
@@ -1414,54 +1424,50 @@ export default function EVAnalysisPage() {
                   Showing {Math.min((currentPage - 1) * pageSize + 1, filteredBets.length)} to {Math.min(currentPage * pageSize, filteredBets.length)} of {filteredBets.length} bets
                 </span>
               </div>
-              
+
               <div className="flex space-x-2">
                 <button
                   onClick={() => setCurrentPage(1)}
                   disabled={currentPage === 1}
-                  className={`px-3 py-1 rounded ${
-                    currentPage === 1
+                  className={`px-3 py-1 rounded ${currentPage === 1
                       ? "bg-gray-200 text-gray-400 cursor-not-allowed"
                       : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                  }`}
+                    }`}
                 >
                   &laquo;
                 </button>
                 <button
                   onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                   disabled={currentPage === 1}
-                  className={`px-3 py-1 rounded ${
-                    currentPage === 1
+                  className={`px-3 py-1 rounded ${currentPage === 1
                       ? "bg-gray-200 text-gray-400 cursor-not-allowed"
                       : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                  }`}
+                    }`}
                 >
                   &lsaquo;
                 </button>
-                
+
                 <span className="px-3 py-1 rounded bg-blue-600 text-white">
                   {currentPage}
                 </span>
-                
+
                 <button
                   onClick={() => setCurrentPage(Math.min(Math.ceil(filteredBets.length / pageSize), currentPage + 1))}
                   disabled={currentPage >= Math.ceil(filteredBets.length / pageSize)}
-                  className={`px-3 py-1 rounded ${
-                    currentPage >= Math.ceil(filteredBets.length / pageSize)
+                  className={`px-3 py-1 rounded ${currentPage >= Math.ceil(filteredBets.length / pageSize)
                       ? "bg-gray-200 text-gray-400 cursor-not-allowed"
                       : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                  }`}
+                    }`}
                 >
                   &rsaquo;
                 </button>
                 <button
                   onClick={() => setCurrentPage(Math.ceil(filteredBets.length / pageSize))}
                   disabled={currentPage >= Math.ceil(filteredBets.length / pageSize)}
-                  className={`px-3 py-1 rounded ${
-                    currentPage >= Math.ceil(filteredBets.length / pageSize)
+                  className={`px-3 py-1 rounded ${currentPage >= Math.ceil(filteredBets.length / pageSize)
                       ? "bg-gray-200 text-gray-400 cursor-not-allowed"
                       : "bg-gray-200 text-gray-700 hover:bg-gray-300"
-                  }`}
+                    }`}
                 >
                   &raquo;
                 </button>

@@ -11,7 +11,17 @@ import sys
 from import_csv import import_bets_from_csv
 from import_pikkit_csv import import_pikkit_bets_from_csv
 from unified_bet_mapping import UnifiedBetMapper
+import asyncio
+import concurrent.futures
 
+
+# Define Pikkit-tracked sportsbooks (centralized)
+PIKKIT_SPORTSBOOKS = {
+    'BetMGM', 'Caesars Sportsbook', 'Caesars', 'Draftkings Sportsbook', 'DraftKings',
+    'ESPN BET', 'ESPNBet', 'Fanatics', 'Fanduel Sportsbook', 'FanDuel', 
+    'Fliff', 'Novig', 'Onyx', 'Onyx Odds', 'PrizePicks', 'ProphetX', 
+    'Prophet X', 'Rebet', 'Thrillzz', 'Underdog Fantasy'
+}
 
 # Make the import dynamic to avoid circular imports
 def get_import_function():
@@ -649,20 +659,66 @@ def get_ev_analysis():
         traceback.print_exc()
         return jsonify({"error": str(e)}), 500
 
+# @bp.route("/bets/unconfirmed")
+# def get_unconfirmed_bets():
+#     try:
+#         # Use text() to properly declare SQL queries
+#         sql = text("""
+#             SELECT id, event_name, bet_name, sportsbook, bet_type, 
+#                    odds, stake, status, bet_profit, event_start_date
+#             FROM bet 
+#             WHERE status != 'pending' 
+#             AND (confirmed_settlement IS NULL OR confirmed_settlement = 0)
+#             ORDER BY id DESC
+#         """)
+        
+#         result = db.session.execute(sql)
+        
+#         # Convert result to list of dictionaries
+#         bets = [
+#             {
+#                 "id": row[0],
+#                 "event_name": row[1],
+#                 "bet_name": row[2],
+#                 "sportsbook": row[3],
+#                 "bet_type": row[4],
+#                 "odds": row[5],
+#                 "stake": float(row[6]) if row[6] else 0,
+#                 "status": row[7],
+#                 "bet_profit": float(row[8]) if row[8] else 0,
+#                 "event_start_date": row[9].isoformat() if row[9] else None
+#             }
+#             for row in result
+#         ]
+        
+#         return jsonify(bets)
+    
+#     except Exception as e:
+#         print(f"Error retrieving unconfirmed bets: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
+
+# Replace the existing get_unconfirmed_bets endpoint
 @bp.route("/bets/unconfirmed")
 def get_unconfirmed_bets():
+    """Get unconfirmed bets EXCLUDING Pikkit-tracked sportsbooks"""
     try:
         # Use text() to properly declare SQL queries
-        sql = text("""
+        # Exclude sportsbooks that are tracked by Pikkit since they don't need confirmation
+        placeholders = ','.join(['?' for _ in PIKKIT_SPORTSBOOKS])
+        sql = text(f"""
             SELECT id, event_name, bet_name, sportsbook, bet_type, 
                    odds, stake, status, bet_profit, event_start_date
             FROM bet 
             WHERE status != 'pending' 
             AND (confirmed_settlement IS NULL OR confirmed_settlement = 0)
+            AND sportsbook NOT IN ({','.join([':sb' + str(i) for i in range(len(PIKKIT_SPORTSBOOKS))])})
             ORDER BY id DESC
         """)
         
-        result = db.session.execute(sql)
+        # Create parameter dict for the sportsbooks
+        params = {f'sb{i}': sb for i, sb in enumerate(PIKKIT_SPORTSBOOKS)}
+        
+        result = db.session.execute(sql, params)
         
         # Convert result to list of dictionaries
         bets = [
@@ -753,42 +809,206 @@ def import_bets():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     
+# @bp.route("/bets/sync", methods=["POST"])
+# def sync_bets():
+#     try:
+#         # Path to your import_csv.py script
+#         script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_csv.py")
+        
+#         # Check if the script exists
+#         if not os.path.exists(script_path):
+#             return jsonify({
+#                 "error": f"Import script not found at {script_path}"
+#             }), 404
+        
+#         # Run the script in a separate process
+#         result = subprocess.run(
+#             [sys.executable, script_path],
+#             capture_output=True,
+#             text=True
+#         )
+        
+#         if result.returncode != 0:
+#             return jsonify({
+#                 "error": "Error running sync script",
+#                 "details": result.stderr
+#             }), 500
+        
+#         # Return success message with any output from the script
+#         return jsonify({
+#             "message": "Sync completed successfully!",
+#             "details": result.stdout
+#         }), 200
+    
+#     except Exception as e:
+#         # Handle other errors
+#         return jsonify({
+#             "error": str(e)
+#         }), 500
+
+# Enhanced sync endpoint that handles both sources
 @bp.route("/bets/sync", methods=["POST"])
 def sync_bets():
+    """Enhanced sync that updates both OddsJam and Pikkit data sources"""
     try:
-        # Path to your import_csv.py script
-        script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_csv.py")
+        # Path to your import scripts
+        oddsjam_script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_csv.py")
+        pikkit_script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_pikkit_csv.py")
         
-        # Check if the script exists
-        if not os.path.exists(script_path):
+        # Check if scripts exist
+        missing_scripts = []
+        if not os.path.exists(oddsjam_script_path):
+            missing_scripts.append(f"OddsJam script: {oddsjam_script_path}")
+        if not os.path.exists(pikkit_script_path):
+            missing_scripts.append(f"Pikkit script: {pikkit_script_path}")
+            
+        if missing_scripts:
             return jsonify({
-                "error": f"Import script not found at {script_path}"
+                "error": "Import scripts not found",
+                "missing": missing_scripts
             }), 404
         
-        # Run the script in a separate process
-        result = subprocess.run(
-            [sys.executable, script_path],
-            capture_output=True,
-            text=True
-        )
+        # Function to run a script and capture output
+        def run_script(script_path, script_name):
+            try:
+                result = subprocess.run(
+                    [sys.executable, script_path],
+                    capture_output=True,
+                    text=True,
+                    timeout=300  # 5 minute timeout
+                )
+                
+                return {
+                    "name": script_name,
+                    "success": result.returncode == 0,
+                    "stdout": result.stdout,
+                    "stderr": result.stderr,
+                    "returncode": result.returncode
+                }
+            except subprocess.TimeoutExpired:
+                return {
+                    "name": script_name,
+                    "success": False,
+                    "stdout": "",
+                    "stderr": f"{script_name} script timed out after 5 minutes",
+                    "returncode": -1
+                }
+            except Exception as e:
+                return {
+                    "name": script_name,
+                    "success": False,
+                    "stdout": "",
+                    "stderr": str(e),
+                    "returncode": -1
+                }
         
-        if result.returncode != 0:
-            return jsonify({
-                "error": "Error running sync script",
-                "details": result.stderr
-            }), 500
+        # Run both scripts concurrently for faster sync
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            # Submit both scripts to run in parallel
+            oddsjam_future = executor.submit(run_script, oddsjam_script_path, "OddsJam")
+            pikkit_future = executor.submit(run_script, pikkit_script_path, "Pikkit")
+            
+            # Wait for both to complete
+            oddsjam_result = oddsjam_future.result()
+            pikkit_result = pikkit_future.result()
         
-        # Return success message with any output from the script
-        return jsonify({
-            "message": "Sync completed successfully!",
-            "details": result.stdout
-        }), 200
+        # Determine overall success
+        overall_success = oddsjam_result["success"] and pikkit_result["success"]
+        
+        # Prepare response
+        response_data = {
+            "overall_success": overall_success,
+            "message": "Dual sync completed" + (" successfully!" if overall_success else " with some errors"),
+            "details": {
+                "oddsjam": oddsjam_result,
+                "pikkit": pikkit_result
+            },
+            "summary": {
+                "oddsjam_success": oddsjam_result["success"],
+                "pikkit_success": pikkit_result["success"],
+                "scripts_run": 2
+            }
+        }
+        
+        # If both failed, return error status
+        if not oddsjam_result["success"] and not pikkit_result["success"]:
+            return jsonify(response_data), 500
+        
+        # If one failed, return warning status
+        if not overall_success:
+            return jsonify(response_data), 207  # Multi-Status
+        
+        # Both succeeded
+        return jsonify(response_data), 200
     
     except Exception as e:
         # Handle other errors
         return jsonify({
-            "error": str(e)
+            "overall_success": False,
+            "error": str(e),
+            "message": "Error during dual sync operation"
         }), 500
+
+# Add a new endpoint to get sync status/info
+@bp.route("/bets/sync-info")
+def get_sync_info():
+    """Get information about available sync sources and their status"""
+    try:
+        # Check script availability
+        oddsjam_script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_csv.py")
+        pikkit_script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_pikkit_csv.py")
+        
+        # Get last sync times from database (you could add a sync_log table for this)
+        # For now, we'll use the latest created_at_db timestamps
+        try:
+            last_oddsjam_sync = db.session.query(func.max(Bet.created_at_db)).scalar()
+            last_pikkit_sync = db.session.query(func.max(PikkitBet.created_at_db)).scalar()
+        except:
+            last_oddsjam_sync = None
+            last_pikkit_sync = None
+        
+        # Get counts
+        oddsjam_count = Bet.query.filter(~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS)).count()
+        pikkit_count = PikkitBet.query.count()
+        unconfirmed_count = Bet.query.filter(
+            Bet.status != 'pending',
+            (Bet.confirmed_settlement.is_(None) | (Bet.confirmed_settlement == False)),
+            ~Bet.sportsbook.in_(PIKKIT_SPORTSBOOKS)
+        ).count()
+        
+        return jsonify({
+            "sync_sources": {
+                "oddsjam": {
+                    "script_available": os.path.exists(oddsjam_script_path),
+                    "description": "Manual bet tracking for offshore sportsbooks",
+                    "sportsbooks_tracked": "Offshore books (BetOnline, BookMaker, etc.)",
+                    "bet_count": oddsjam_count,
+                    "last_sync": last_oddsjam_sync.isoformat() if last_oddsjam_sync else None,
+                    "requires_confirmation": True
+                },
+                "pikkit": {
+                    "script_available": os.path.exists(pikkit_script_path),
+                    "description": "Automated bet tracking for US regulated sportsbooks",
+                    "sportsbooks_tracked": list(PIKKIT_SPORTSBOOKS),
+                    "bet_count": pikkit_count,
+                    "last_sync": last_pikkit_sync.isoformat() if last_pikkit_sync else None,
+                    "requires_confirmation": False
+                }
+            },
+            "sync_behavior": {
+                "runs_both_sources": True,
+                "concurrent_execution": True,
+                "timeout_minutes": 5,
+                "excludes_pikkit_from_confirmation": True
+            },
+            "current_status": {
+                "unconfirmed_bets": unconfirmed_count,
+                "note": "Only shows bets from non-Pikkit sportsbooks"
+            }
+        })
+    
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @bp.route("/bets/expected-profit")
 def get_expected_profit():
