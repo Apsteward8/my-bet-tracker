@@ -137,11 +137,15 @@ export default function CalendarPage() {
     const month = currentDate.getMonth();
     const today = new Date();
     
-    // Get first day of month and calculate days to show
+    // Get first day of month
     const firstDay = new Date(year, month, 1);
-    const lastDay = new Date(year, month + 1, 0);
-    const startDate = new Date(firstDay);
-    startDate.setDate(startDate.getDate() - firstDay.getDay()); // Start from Sunday
+    
+    // Calculate the start date for the calendar grid (previous Sunday)
+    // getDay() returns 0 for Sunday, 1 for Monday, etc.
+    const firstDayOfWeek = firstDay.getDay();
+    
+    // Create start date by going back to the previous Sunday
+    const startDate = new Date(year, month, 1 - firstDayOfWeek);
     
     const days: DayData[] = [];
     
@@ -153,8 +157,8 @@ export default function CalendarPage() {
     
     // Generate 42 days (6 weeks) for calendar grid
     for (let i = 0; i < 42; i++) {
-      const currentDay = new Date(startDate);
-      currentDay.setDate(startDate.getDate() + i);
+      // Create a new date for each iteration to avoid mutation issues
+      const currentDay = new Date(startDate.getTime() + (i * 24 * 60 * 60 * 1000));
       
       const dateKey = currentDay.toISOString().split('T')[0];
       const dayData = dataMap[dateKey];
@@ -212,7 +216,7 @@ export default function CalendarPage() {
     
     if (!day.isCurrentMonth) {
       className += "text-gray-400 bg-gray-50 border-gray-200 ";
-    } else if (day.selectedDate === day.date) {
+    } else if (selectedDate === day.date) {
       className += "ring-2 ring-blue-500 bg-blue-50 border-blue-300 ";
     } else if (day.isToday) {
       className += "ring-2 ring-blue-400 ";
