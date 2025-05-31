@@ -14,6 +14,7 @@ from unified_bet_mapping import UnifiedBetMapper
 import asyncio
 from data_converters import PIKKIT_SPORTSBOOKS, ODDSJAM_SPORTSBOOKS
 import concurrent.futures
+from models_unified import UnifiedBet, db as unified_db
 
 
 # Define Pikkit-tracked sportsbooks (centralized)
@@ -3314,6 +3315,530 @@ def debug_calendar():
         return jsonify({"error": str(e)}), 500
 
 
+# @bp.route("/test")
+# def test_endpoint():
+#     """Simple test endpoint to verify routes are working"""
+#     return jsonify({
+#         "message": "Blueprint routes are working!",
+#         "timestamp": datetime.now().isoformat()
+#     })
+
+# bp = Blueprint("unified_bets", __name__, url_prefix="/api/unified")
+
+# @bp.route("/bets")
+# def get_unified_bets():
+#     """Get unified bets with pagination and filtering"""
+#     try:
+#         # Parse query parameters
+#         page = request.args.get('page', 1, type=int)
+#         per_page = request.args.get('per_page', 20, type=int)
+#         status = request.args.get('status')
+#         sportsbook = request.args.get('sportsbook')
+#         source = request.args.get('source')  # 'oddsjam', 'pikkit', or None for all
+#         sport = request.args.get('sport')
+        
+#         # Build the query
+#         query = UnifiedBet.query
+        
+#         # Apply filters if provided
+#         if status:
+#             query = query.filter(UnifiedBet.status == status)
+#         if sportsbook:
+#             query = query.filter(UnifiedBet.sportsbook == sportsbook)
+#         if source:
+#             query = query.filter(UnifiedBet.source == source)
+#         if sport:
+#             query = query.filter(UnifiedBet.sport == sport)
+        
+#         # Order by most recent first
+#         query = query.order_by(UnifiedBet.time_placed.desc())
+        
+#         # Return paginated results
+#         pagination = query.paginate(page=page, per_page=per_page)
+        
+#         return jsonify({
+#             "current_page": pagination.page,
+#             "pages": pagination.pages,
+#             "total": pagination.total,
+#             "items": [
+#                 {
+#                     "id": b.id,
+#                     "source": b.source.value if b.source else None,
+#                     "original_bet_id": b.original_bet_id,
+#                     "sportsbook": b.sportsbook,
+#                     "bet_type": b.bet_type.value if b.bet_type else None,
+#                     "status": b.status.value if b.status else None,
+#                     "odds": b.odds,
+#                     "clv": b.clv,
+#                     "stake": float(b.stake) if b.stake else 0,
+#                     "bet_profit": float(b.bet_profit) if b.bet_profit else 0,
+#                     "time_placed": b.time_placed.isoformat() if b.time_placed else None,
+#                     "time_settled": b.time_settled.isoformat() if b.time_settled else None,
+#                     "bet_info": b.bet_info,
+#                     "sport": b.sport,
+#                     "league": b.league,
+#                     "tags": b.tags,
+#                     "verified": b.verified
+#                 }
+#                 for b in pagination.items
+#             ],
+#             "source_info": {
+#                 "pikkit_sportsbooks": list(PIKKIT_SPORTSBOOKS),
+#                 "oddsjam_sportsbooks": list(ODDSJAM_SPORTSBOOKS)
+#             }
+#         })
+    
+#     except Exception as e:
+#         print(f"Error retrieving unified bets: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/stats")
+# def get_unified_stats():
+#     """Get comprehensive statistics from unified table"""
+#     try:
+#         # Overall stats
+#         total_bets = UnifiedBet.query.count()
+#         winning_bets = UnifiedBet.query.filter(UnifiedBet.status == 'won').count()
+#         losing_bets = UnifiedBet.query.filter(UnifiedBet.status == 'lost').count()
+#         pending_bets = UnifiedBet.query.filter(UnifiedBet.status == 'pending').count()
+#         refunded_bets = UnifiedBet.query.filter(UnifiedBet.status == 'refunded').count()
+        
+#         # Financial stats
+#         total_profit = db.session.query(func.sum(UnifiedBet.bet_profit)).scalar() or 0
+#         total_stake = db.session.query(func.sum(UnifiedBet.stake)).scalar() or 0
+#         roi = (total_profit / total_stake * 100) if total_stake > 0 else 0
+        
+#         # Win rate calculation
+#         decisive_bets = winning_bets + losing_bets
+#         win_rate = (winning_bets / decisive_bets * 100) if decisive_bets > 0 else 0
+        
+#         # Source breakdown
+#         source_stats = db.session.query(
+#             UnifiedBet.source,
+#             func.count(UnifiedBet.id),
+#             func.sum(UnifiedBet.bet_profit),
+#             func.sum(UnifiedBet.stake)
+#         ).group_by(UnifiedBet.source).all()
+        
+#         source_breakdown = {}
+#         for source, count, profit, stake in source_stats:
+#             source_breakdown[source] = {
+#                 "bet_count": count,
+#                 "total_profit": float(profit) if profit else 0,
+#                 "total_stake": float(stake) if stake else 0,
+#                 "roi": (float(profit) / float(stake) * 100) if stake and stake > 0 else 0
+#             }
+        
+#         # Sportsbook breakdown
+#         sportsbook_stats = db.session.query(
+#             UnifiedBet.sportsbook,
+#             UnifiedBet.source,
+#             func.count(UnifiedBet.id),
+#             func.sum(UnifiedBet.bet_profit),
+#             func.sum(UnifiedBet.stake)
+#         ).group_by(UnifiedBet.sportsbook, UnifiedBet.source).all()
+        
+#         sportsbooks = []
+#         for sb, source, count, profit, stake in sportsbook_stats:
+#             sportsbooks.append({
+#                 "name": sb,
+#                 "source": source,
+#                 "bet_count": count,
+#                 "total_profit": float(profit) if profit else 0,
+#                 "total_stake": float(stake) if stake else 0,
+#                 "roi": (float(profit) / float(stake) * 100) if stake and stake > 0 else 0
+#             })
+        
+#         # Sort by profit
+#         sportsbooks.sort(key=lambda x: x["total_profit"], reverse=True)
+        
+#         # Sport breakdown
+#         sport_stats = db.session.query(
+#             UnifiedBet.sport,
+#             func.count(UnifiedBet.id),
+#             func.sum(UnifiedBet.bet_profit),
+#             func.sum(UnifiedBet.stake)
+#         ).filter(UnifiedBet.sport.isnot(None), UnifiedBet.sport != '').group_by(UnifiedBet.sport).all()
+        
+#         sports = []
+#         for sport, count, profit, stake in sport_stats:
+#             sports.append({
+#                 "name": sport,
+#                 "bet_count": count,
+#                 "total_profit": float(profit) if profit else 0,
+#                 "total_stake": float(stake) if stake else 0,
+#                 "roi": (float(profit) / float(stake) * 100) if stake and stake > 0 else 0
+#             })
+        
+#         sports.sort(key=lambda x: x["total_profit"], reverse=True)
+        
+#         return jsonify({
+#             "overall_stats": {
+#                 "total_bets": total_bets,
+#                 "winning_bets": winning_bets,
+#                 "losing_bets": losing_bets,
+#                 "pending_bets": pending_bets,
+#                 "refunded_bets": refunded_bets,
+#                 "total_profit": float(total_profit),
+#                 "total_stake": float(total_stake),
+#                 "roi": roi,
+#                 "win_rate": win_rate
+#             },
+#             "source_breakdown": source_breakdown,
+#             "sportsbook_stats": sportsbooks,
+#             "sport_stats": sports
+#         })
+    
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/daily-data")
+# def get_unified_daily_data():
+#     """Get daily profit data for charts"""
+#     try:
+#         # Parse query parameters
+#         days = request.args.get('days', 7, type=int)
+        
+#         # Calculate date range
+#         end_date = datetime.now().date()
+#         start_date = end_date - timedelta(days=days-1)
+        
+#         daily_data = []
+        
+#         # Generate data for each day
+#         for i in range(days):
+#             current_date = start_date + timedelta(days=i)
+            
+#             # Get settled bets for this date (use time_settled for settled bets)
+#             settled_profit = db.session.query(func.sum(UnifiedBet.bet_profit)).filter(
+#                 UnifiedBet.status.in_(['won', 'lost', 'refunded']),
+#                 func.date(func.coalesce(UnifiedBet.time_settled, UnifiedBet.time_placed)) == current_date
+#             ).scalar() or 0
+            
+#             settled_count = db.session.query(func.count(UnifiedBet.id)).filter(
+#                 UnifiedBet.status.in_(['won', 'lost', 'refunded']),
+#                 func.date(func.coalesce(UnifiedBet.time_settled, UnifiedBet.time_placed)) == current_date
+#             ).scalar() or 0
+            
+#             # Get source breakdown
+#             oddsjam_profit = db.session.query(func.sum(UnifiedBet.bet_profit)).filter(
+#                 UnifiedBet.source == 'oddsjam',
+#                 UnifiedBet.status.in_(['won', 'lost', 'refunded']),
+#                 func.date(func.coalesce(UnifiedBet.time_settled, UnifiedBet.time_placed)) == current_date
+#             ).scalar() or 0
+            
+#             pikkit_profit = db.session.query(func.sum(UnifiedBet.bet_profit)).filter(
+#                 UnifiedBet.source == 'pikkit',
+#                 UnifiedBet.status.in_(['won', 'lost', 'refunded']),
+#                 func.date(func.coalesce(UnifiedBet.time_settled, UnifiedBet.time_placed)) == current_date
+#             ).scalar() or 0
+            
+#             daily_data.append({
+#                 'date': current_date.isoformat(),
+#                 'profit': float(settled_profit),
+#                 'settled_bets': settled_count,
+#                 'oddsjam_profit': float(oddsjam_profit),
+#                 'pikkit_profit': float(pikkit_profit)
+#             })
+        
+#         # Calculate cumulative profits
+#         cumulative = 0
+#         for day in daily_data:
+#             cumulative += day['profit']
+#             day['cumulative'] = cumulative
+        
+#         return jsonify({
+#             'daily_data': daily_data,
+#             'date_range': {
+#                 'start': start_date.isoformat(),
+#                 'end': end_date.isoformat(),
+#                 'days': days
+#             },
+#             'summary': {
+#                 'total_profit': cumulative,
+#                 'total_bets': sum(day['settled_bets'] for day in daily_data)
+#             }
+#         })
+    
+#     except Exception as e:
+#         print(f"Error getting unified daily data: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/import", methods=["POST"])
+# def import_unified_data():
+#     """Import data from both sources"""
+#     try:
+#         # Import the import functions
+#         from import_unified import import_both_sources
+        
+#         # Run the import
+#         import_both_sources()
+        
+#         return jsonify({"message": "Unified import completed successfully"}), 200
+    
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/sync", methods=["POST"])
+# def sync_unified_data():
+#     """Sync data from both CSV sources"""
+#     try:
+#         # Path to unified import script
+#         script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_unified.py")
+        
+#         if not os.path.exists(script_path):
+#             return jsonify({
+#                 "error": f"Unified import script not found at {script_path}"
+#             }), 404
+        
+#         # Run the script
+#         result = subprocess.run(
+#             [sys.executable, script_path],
+#             capture_output=True,
+#             text=True,
+#             timeout=600  # 10 minute timeout
+#         )
+        
+#         if result.returncode != 0:
+#             return jsonify({
+#                 "error": "Error running unified sync",
+#                 "details": result.stderr
+#             }), 500
+        
+#         return jsonify({
+#             "message": "Unified sync completed successfully!",
+#             "details": result.stdout
+#         }), 200
+    
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/sportsbook-mapping")
+# def get_sportsbook_mapping():
+#     """Get the sportsbook to source mapping"""
+#     try:
+#         return jsonify({
+#             "pikkit_sportsbooks": list(PIKKIT_SPORTSBOOKS),
+#             "oddsjam_sportsbooks": list(ODDSJAM_SPORTSBOOKS),
+#             "mapping_rules": {
+#                 "pikkit_priority": "Bets from these sportsbooks are imported from Pikkit",
+#                 "oddsjam_priority": "Bets from these sportsbooks are imported from OddsJam",
+#                 "unknown_sportsbooks": "Bets from unlisted sportsbooks are imported from both sources"
+#             }
+#         })
+    
+#     except Exception as e:
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/unverified-bets")
+# def get_unverified_bets():
+#     """Get settled bets that need manual verification (for confirmation page)"""
+#     try:
+#         # Parse query parameters
+#         page = request.args.get('page', 1, type=int)
+#         per_page = request.args.get('per_page', 50, type=int)  # Show more on confirmation page
+#         sportsbook = request.args.get('sportsbook')
+#         status = request.args.get('status')
+        
+#         # Build query for unverified settled bets (only OddsJam since Pikkit is auto-verified)
+#         query = UnifiedBet.query.filter(
+#             UnifiedBet.source == 'oddsjam',  # Only OddsJam bets need verification
+#             UnifiedBet.verified == False,    # Not yet verified
+#             UnifiedBet.status.in_(['won', 'lost', 'refunded'])  # Only settled bets
+#         )
+        
+#         # Apply additional filters if provided
+#         if sportsbook:
+#             query = query.filter(UnifiedBet.sportsbook == sportsbook)
+#         if status:
+#             query = query.filter(UnifiedBet.status == status)
+        
+#         # Order by settlement date (most recent first)
+#         query = query.order_by(UnifiedBet.time_settled.desc())
+        
+#         # Paginate results
+#         pagination = query.paginate(page=page, per_page=per_page)
+        
+#         return jsonify({
+#             "current_page": pagination.page,
+#             "pages": pagination.pages,
+#             "total": pagination.total,
+#             "items": [
+#                 {
+#                     "id": b.id,
+#                     "original_bet_id": b.original_bet_id,
+#                     "sportsbook": b.sportsbook,
+#                     "status": b.status.value if b.status else None,
+#                     "odds": b.odds,
+#                     "stake": float(b.stake) if b.stake else 0,
+#                     "bet_profit": float(b.bet_profit) if b.bet_profit else 0,
+#                     "time_settled": b.time_settled.isoformat() if b.time_settled else None,
+#                     "bet_info": b.bet_info,
+#                     "sport": b.sport,
+#                     "league": b.league,
+#                     "verified": b.verified
+#                 }
+#                 for b in pagination.items
+#             ],
+#             "verification_info": {
+#                 "description": "These OddsJam bets have been settled but not manually verified",
+#                 "action_needed": "Check each bet against sportsbook records and mark as verified",
+#                 "auto_verified": "Pikkit bets are automatically verified and don't appear here"
+#             }
+#         })
+    
+#     except Exception as e:
+#         print(f"Error retrieving unverified bets: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/verify-bet/<int:bet_id>", methods=["PUT"])
+# def verify_bet(bet_id):
+#     """Mark a bet as verified after manual confirmation"""
+#     try:
+#         # Find the bet
+#         bet = UnifiedBet.query.get_or_404(bet_id)
+        
+#         # Verify it's an OddsJam bet (Pikkit bets are auto-verified)
+#         if bet.source.value != 'oddsjam':
+#             return jsonify({
+#                 "error": "Only OddsJam bets can be manually verified. Pikkit bets are auto-verified."
+#             }), 400
+        
+#         # Check if already verified
+#         if bet.verified:
+#             return jsonify({
+#                 "message": "Bet is already verified",
+#                 "bet_id": bet_id,
+#                 "verified": True
+#             }), 200
+        
+#         # Mark as verified
+#         bet.verified = True
+#         db.session.commit()
+        
+#         return jsonify({
+#             "message": "Bet successfully verified",
+#             "bet_id": bet_id,
+#             "verified": True,
+#             "verified_at": datetime.now().isoformat()
+#         }), 200
+    
+#     except Exception as e:
+#         db.session.rollback()
+#         print(f"Error verifying bet {bet_id}: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/verify-multiple", methods=["PUT"])
+# def verify_multiple_bets():
+#     """Mark multiple bets as verified (for bulk confirmation)"""
+#     try:
+#         data = request.get_json()
+#         bet_ids = data.get('bet_ids', [])
+        
+#         if not bet_ids:
+#             return jsonify({"error": "No bet IDs provided"}), 400
+        
+#         if len(bet_ids) > 100:  # Limit bulk operations
+#             return jsonify({"error": "Maximum 100 bets can be verified at once"}), 400
+        
+#         # Find all bets
+#         bets = UnifiedBet.query.filter(
+#             UnifiedBet.id.in_(bet_ids),
+#             UnifiedBet.source == 'oddsjam',  # Only allow OddsJam verification
+#             UnifiedBet.verified == False     # Only unverified bets
+#         ).all()
+        
+#         if not bets:
+#             return jsonify({
+#                 "error": "No unverified OddsJam bets found with provided IDs"
+#             }), 404
+        
+#         # Mark all as verified
+#         verified_count = 0
+#         for bet in bets:
+#             bet.verified = True
+#             verified_count += 1
+        
+#         db.session.commit()
+        
+#         return jsonify({
+#             "message": f"Successfully verified {verified_count} bets",
+#             "verified_count": verified_count,
+#             "verified_bet_ids": [bet.id for bet in bets],
+#             "verified_at": datetime.now().isoformat()
+#         }), 200
+    
+#     except Exception as e:
+#         db.session.rollback()
+#         print(f"Error verifying multiple bets: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
+
+# @bp.route("/verification-stats")
+# def get_verification_stats():
+#     """Get verification statistics for dashboard"""
+#     try:
+#         # Overall verification stats
+#         total_bets = UnifiedBet.query.count()
+#         verified_bets = UnifiedBet.query.filter(UnifiedBet.verified == True).count()
+#         unverified_bets = UnifiedBet.query.filter(UnifiedBet.verified == False).count()
+        
+#         # Unverified settled bets (the ones that need attention)
+#         unverified_settled = UnifiedBet.query.filter(
+#             UnifiedBet.verified == False,
+#             UnifiedBet.status.in_(['won', 'lost', 'refunded']),
+#             UnifiedBet.source == 'oddsjam'  # Only OddsJam needs manual verification
+#         ).count()
+        
+#         # Source breakdown
+#         source_stats = db.session.query(
+#             UnifiedBet.source,
+#             func.count(UnifiedBet.id).label('total'),
+#             func.sum(func.cast(UnifiedBet.verified, db.Integer)).label('verified')
+#         ).group_by(UnifiedBet.source).all()
+        
+#         source_breakdown = {}
+#         for source, total, verified in source_stats:
+#             source_breakdown[source.value] = {
+#                 "total_bets": total,
+#                 "verified_bets": int(verified) if verified else 0,
+#                 "unverified_bets": total - (int(verified) if verified else 0),
+#                 "verification_rate": (int(verified) / total * 100) if total > 0 and verified else 0
+#             }
+        
+#         # Recent verification activity (last 7 days)
+#         seven_days_ago = datetime.now() - timedelta(days=7)
+#         recent_verifications = UnifiedBet.query.filter(
+#             UnifiedBet.verified == True,
+#             UnifiedBet.updated_at_db >= seven_days_ago
+#         ).count()
+        
+#         return jsonify({
+#             "overall_stats": {
+#                 "total_bets": total_bets,
+#                 "verified_bets": verified_bets,
+#                 "unverified_bets": unverified_bets,
+#                 "verification_rate": (verified_bets / total_bets * 100) if total_bets > 0 else 0
+#             },
+#             "action_needed": {
+#                 "unverified_settled_bets": unverified_settled,
+#                 "description": "OddsJam bets that are settled but not manually verified"
+#             },
+#             "source_breakdown": source_breakdown,
+#             "recent_activity": {
+#                 "verifications_last_7_days": recent_verifications
+#             },
+#             "system_info": {
+#                 "auto_verified_sources": ["pikkit"],
+#                 "manual_verification_sources": ["oddsjam"],
+#                 "reason": "Pikkit data comes directly from sportsbooks, OddsJam requires manual verification"
+#             }
+#         })
+    
+#     except Exception as e:
+#         print(f"Error getting verification stats: {str(e)}")
+#         return jsonify({"error": str(e)}), 500
+
+# Then add this at the very end:
 @bp.route("/test")
 def test_endpoint():
     """Simple test endpoint to verify routes are working"""
@@ -3321,518 +3846,3 @@ def test_endpoint():
         "message": "Blueprint routes are working!",
         "timestamp": datetime.now().isoformat()
     })
-
-bp = Blueprint("unified_bets", __name__, url_prefix="/api/unified")
-
-@bp.route("/bets")
-def get_unified_bets():
-    """Get unified bets with pagination and filtering"""
-    try:
-        # Parse query parameters
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 20, type=int)
-        status = request.args.get('status')
-        sportsbook = request.args.get('sportsbook')
-        source = request.args.get('source')  # 'oddsjam', 'pikkit', or None for all
-        sport = request.args.get('sport')
-        
-        # Build the query
-        query = UnifiedBet.query
-        
-        # Apply filters if provided
-        if status:
-            query = query.filter(UnifiedBet.status == status)
-        if sportsbook:
-            query = query.filter(UnifiedBet.sportsbook == sportsbook)
-        if source:
-            query = query.filter(UnifiedBet.source == source)
-        if sport:
-            query = query.filter(UnifiedBet.sport == sport)
-        
-        # Order by most recent first
-        query = query.order_by(UnifiedBet.time_placed.desc())
-        
-        # Return paginated results
-        pagination = query.paginate(page=page, per_page=per_page)
-        
-        return jsonify({
-            "current_page": pagination.page,
-            "pages": pagination.pages,
-            "total": pagination.total,
-            "items": [
-                {
-                    "id": b.id,
-                    "source": b.source.value if b.source else None,
-                    "original_bet_id": b.original_bet_id,
-                    "sportsbook": b.sportsbook,
-                    "bet_type": b.bet_type.value if b.bet_type else None,
-                    "status": b.status.value if b.status else None,
-                    "odds": b.odds,
-                    "clv": b.clv,
-                    "stake": float(b.stake) if b.stake else 0,
-                    "bet_profit": float(b.bet_profit) if b.bet_profit else 0,
-                    "time_placed": b.time_placed.isoformat() if b.time_placed else None,
-                    "time_settled": b.time_settled.isoformat() if b.time_settled else None,
-                    "bet_info": b.bet_info,
-                    "sport": b.sport,
-                    "league": b.league,
-                    "tags": b.tags,
-                    "verified": b.verified
-                }
-                for b in pagination.items
-            ],
-            "source_info": {
-                "pikkit_sportsbooks": list(PIKKIT_SPORTSBOOKS),
-                "oddsjam_sportsbooks": list(ODDSJAM_SPORTSBOOKS)
-            }
-        })
-    
-    except Exception as e:
-        print(f"Error retrieving unified bets: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/stats")
-def get_unified_stats():
-    """Get comprehensive statistics from unified table"""
-    try:
-        # Overall stats
-        total_bets = UnifiedBet.query.count()
-        winning_bets = UnifiedBet.query.filter(UnifiedBet.status == 'won').count()
-        losing_bets = UnifiedBet.query.filter(UnifiedBet.status == 'lost').count()
-        pending_bets = UnifiedBet.query.filter(UnifiedBet.status == 'pending').count()
-        refunded_bets = UnifiedBet.query.filter(UnifiedBet.status == 'refunded').count()
-        
-        # Financial stats
-        total_profit = db.session.query(func.sum(UnifiedBet.bet_profit)).scalar() or 0
-        total_stake = db.session.query(func.sum(UnifiedBet.stake)).scalar() or 0
-        roi = (total_profit / total_stake * 100) if total_stake > 0 else 0
-        
-        # Win rate calculation
-        decisive_bets = winning_bets + losing_bets
-        win_rate = (winning_bets / decisive_bets * 100) if decisive_bets > 0 else 0
-        
-        # Source breakdown
-        source_stats = db.session.query(
-            UnifiedBet.source,
-            func.count(UnifiedBet.id),
-            func.sum(UnifiedBet.bet_profit),
-            func.sum(UnifiedBet.stake)
-        ).group_by(UnifiedBet.source).all()
-        
-        source_breakdown = {}
-        for source, count, profit, stake in source_stats:
-            source_breakdown[source] = {
-                "bet_count": count,
-                "total_profit": float(profit) if profit else 0,
-                "total_stake": float(stake) if stake else 0,
-                "roi": (float(profit) / float(stake) * 100) if stake and stake > 0 else 0
-            }
-        
-        # Sportsbook breakdown
-        sportsbook_stats = db.session.query(
-            UnifiedBet.sportsbook,
-            UnifiedBet.source,
-            func.count(UnifiedBet.id),
-            func.sum(UnifiedBet.bet_profit),
-            func.sum(UnifiedBet.stake)
-        ).group_by(UnifiedBet.sportsbook, UnifiedBet.source).all()
-        
-        sportsbooks = []
-        for sb, source, count, profit, stake in sportsbook_stats:
-            sportsbooks.append({
-                "name": sb,
-                "source": source,
-                "bet_count": count,
-                "total_profit": float(profit) if profit else 0,
-                "total_stake": float(stake) if stake else 0,
-                "roi": (float(profit) / float(stake) * 100) if stake and stake > 0 else 0
-            })
-        
-        # Sort by profit
-        sportsbooks.sort(key=lambda x: x["total_profit"], reverse=True)
-        
-        # Sport breakdown
-        sport_stats = db.session.query(
-            UnifiedBet.sport,
-            func.count(UnifiedBet.id),
-            func.sum(UnifiedBet.bet_profit),
-            func.sum(UnifiedBet.stake)
-        ).filter(UnifiedBet.sport.isnot(None), UnifiedBet.sport != '').group_by(UnifiedBet.sport).all()
-        
-        sports = []
-        for sport, count, profit, stake in sport_stats:
-            sports.append({
-                "name": sport,
-                "bet_count": count,
-                "total_profit": float(profit) if profit else 0,
-                "total_stake": float(stake) if stake else 0,
-                "roi": (float(profit) / float(stake) * 100) if stake and stake > 0 else 0
-            })
-        
-        sports.sort(key=lambda x: x["total_profit"], reverse=True)
-        
-        return jsonify({
-            "overall_stats": {
-                "total_bets": total_bets,
-                "winning_bets": winning_bets,
-                "losing_bets": losing_bets,
-                "pending_bets": pending_bets,
-                "refunded_bets": refunded_bets,
-                "total_profit": float(total_profit),
-                "total_stake": float(total_stake),
-                "roi": roi,
-                "win_rate": win_rate
-            },
-            "source_breakdown": source_breakdown,
-            "sportsbook_stats": sportsbooks,
-            "sport_stats": sports
-        })
-    
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/daily-data")
-def get_unified_daily_data():
-    """Get daily profit data for charts"""
-    try:
-        # Parse query parameters
-        days = request.args.get('days', 7, type=int)
-        
-        # Calculate date range
-        end_date = datetime.now().date()
-        start_date = end_date - timedelta(days=days-1)
-        
-        daily_data = []
-        
-        # Generate data for each day
-        for i in range(days):
-            current_date = start_date + timedelta(days=i)
-            
-            # Get settled bets for this date (use time_settled for settled bets)
-            settled_profit = db.session.query(func.sum(UnifiedBet.bet_profit)).filter(
-                UnifiedBet.status.in_(['won', 'lost', 'refunded']),
-                func.date(func.coalesce(UnifiedBet.time_settled, UnifiedBet.time_placed)) == current_date
-            ).scalar() or 0
-            
-            settled_count = db.session.query(func.count(UnifiedBet.id)).filter(
-                UnifiedBet.status.in_(['won', 'lost', 'refunded']),
-                func.date(func.coalesce(UnifiedBet.time_settled, UnifiedBet.time_placed)) == current_date
-            ).scalar() or 0
-            
-            # Get source breakdown
-            oddsjam_profit = db.session.query(func.sum(UnifiedBet.bet_profit)).filter(
-                UnifiedBet.source == 'oddsjam',
-                UnifiedBet.status.in_(['won', 'lost', 'refunded']),
-                func.date(func.coalesce(UnifiedBet.time_settled, UnifiedBet.time_placed)) == current_date
-            ).scalar() or 0
-            
-            pikkit_profit = db.session.query(func.sum(UnifiedBet.bet_profit)).filter(
-                UnifiedBet.source == 'pikkit',
-                UnifiedBet.status.in_(['won', 'lost', 'refunded']),
-                func.date(func.coalesce(UnifiedBet.time_settled, UnifiedBet.time_placed)) == current_date
-            ).scalar() or 0
-            
-            daily_data.append({
-                'date': current_date.isoformat(),
-                'profit': float(settled_profit),
-                'settled_bets': settled_count,
-                'oddsjam_profit': float(oddsjam_profit),
-                'pikkit_profit': float(pikkit_profit)
-            })
-        
-        # Calculate cumulative profits
-        cumulative = 0
-        for day in daily_data:
-            cumulative += day['profit']
-            day['cumulative'] = cumulative
-        
-        return jsonify({
-            'daily_data': daily_data,
-            'date_range': {
-                'start': start_date.isoformat(),
-                'end': end_date.isoformat(),
-                'days': days
-            },
-            'summary': {
-                'total_profit': cumulative,
-                'total_bets': sum(day['settled_bets'] for day in daily_data)
-            }
-        })
-    
-    except Exception as e:
-        print(f"Error getting unified daily data: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/import", methods=["POST"])
-def import_unified_data():
-    """Import data from both sources"""
-    try:
-        # Import the import functions
-        from import_unified import import_both_sources
-        
-        # Run the import
-        import_both_sources()
-        
-        return jsonify({"message": "Unified import completed successfully"}), 200
-    
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/sync", methods=["POST"])
-def sync_unified_data():
-    """Sync data from both CSV sources"""
-    try:
-        # Path to unified import script
-        script_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "import_unified.py")
-        
-        if not os.path.exists(script_path):
-            return jsonify({
-                "error": f"Unified import script not found at {script_path}"
-            }), 404
-        
-        # Run the script
-        result = subprocess.run(
-            [sys.executable, script_path],
-            capture_output=True,
-            text=True,
-            timeout=600  # 10 minute timeout
-        )
-        
-        if result.returncode != 0:
-            return jsonify({
-                "error": "Error running unified sync",
-                "details": result.stderr
-            }), 500
-        
-        return jsonify({
-            "message": "Unified sync completed successfully!",
-            "details": result.stdout
-        }), 200
-    
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/sportsbook-mapping")
-def get_sportsbook_mapping():
-    """Get the sportsbook to source mapping"""
-    try:
-        return jsonify({
-            "pikkit_sportsbooks": list(PIKKIT_SPORTSBOOKS),
-            "oddsjam_sportsbooks": list(ODDSJAM_SPORTSBOOKS),
-            "mapping_rules": {
-                "pikkit_priority": "Bets from these sportsbooks are imported from Pikkit",
-                "oddsjam_priority": "Bets from these sportsbooks are imported from OddsJam",
-                "unknown_sportsbooks": "Bets from unlisted sportsbooks are imported from both sources"
-            }
-        })
-    
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/unverified-bets")
-def get_unverified_bets():
-    """Get settled bets that need manual verification (for confirmation page)"""
-    try:
-        # Parse query parameters
-        page = request.args.get('page', 1, type=int)
-        per_page = request.args.get('per_page', 50, type=int)  # Show more on confirmation page
-        sportsbook = request.args.get('sportsbook')
-        status = request.args.get('status')
-        
-        # Build query for unverified settled bets (only OddsJam since Pikkit is auto-verified)
-        query = UnifiedBet.query.filter(
-            UnifiedBet.source == 'oddsjam',  # Only OddsJam bets need verification
-            UnifiedBet.verified == False,    # Not yet verified
-            UnifiedBet.status.in_(['won', 'lost', 'refunded'])  # Only settled bets
-        )
-        
-        # Apply additional filters if provided
-        if sportsbook:
-            query = query.filter(UnifiedBet.sportsbook == sportsbook)
-        if status:
-            query = query.filter(UnifiedBet.status == status)
-        
-        # Order by settlement date (most recent first)
-        query = query.order_by(UnifiedBet.time_settled.desc())
-        
-        # Paginate results
-        pagination = query.paginate(page=page, per_page=per_page)
-        
-        return jsonify({
-            "current_page": pagination.page,
-            "pages": pagination.pages,
-            "total": pagination.total,
-            "items": [
-                {
-                    "id": b.id,
-                    "original_bet_id": b.original_bet_id,
-                    "sportsbook": b.sportsbook,
-                    "status": b.status.value if b.status else None,
-                    "odds": b.odds,
-                    "stake": float(b.stake) if b.stake else 0,
-                    "bet_profit": float(b.bet_profit) if b.bet_profit else 0,
-                    "time_settled": b.time_settled.isoformat() if b.time_settled else None,
-                    "bet_info": b.bet_info,
-                    "sport": b.sport,
-                    "league": b.league,
-                    "verified": b.verified
-                }
-                for b in pagination.items
-            ],
-            "verification_info": {
-                "description": "These OddsJam bets have been settled but not manually verified",
-                "action_needed": "Check each bet against sportsbook records and mark as verified",
-                "auto_verified": "Pikkit bets are automatically verified and don't appear here"
-            }
-        })
-    
-    except Exception as e:
-        print(f"Error retrieving unverified bets: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/verify-bet/<int:bet_id>", methods=["PUT"])
-def verify_bet(bet_id):
-    """Mark a bet as verified after manual confirmation"""
-    try:
-        # Find the bet
-        bet = UnifiedBet.query.get_or_404(bet_id)
-        
-        # Verify it's an OddsJam bet (Pikkit bets are auto-verified)
-        if bet.source.value != 'oddsjam':
-            return jsonify({
-                "error": "Only OddsJam bets can be manually verified. Pikkit bets are auto-verified."
-            }), 400
-        
-        # Check if already verified
-        if bet.verified:
-            return jsonify({
-                "message": "Bet is already verified",
-                "bet_id": bet_id,
-                "verified": True
-            }), 200
-        
-        # Mark as verified
-        bet.verified = True
-        db.session.commit()
-        
-        return jsonify({
-            "message": "Bet successfully verified",
-            "bet_id": bet_id,
-            "verified": True,
-            "verified_at": datetime.now().isoformat()
-        }), 200
-    
-    except Exception as e:
-        db.session.rollback()
-        print(f"Error verifying bet {bet_id}: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/verify-multiple", methods=["PUT"])
-def verify_multiple_bets():
-    """Mark multiple bets as verified (for bulk confirmation)"""
-    try:
-        data = request.get_json()
-        bet_ids = data.get('bet_ids', [])
-        
-        if not bet_ids:
-            return jsonify({"error": "No bet IDs provided"}), 400
-        
-        if len(bet_ids) > 100:  # Limit bulk operations
-            return jsonify({"error": "Maximum 100 bets can be verified at once"}), 400
-        
-        # Find all bets
-        bets = UnifiedBet.query.filter(
-            UnifiedBet.id.in_(bet_ids),
-            UnifiedBet.source == 'oddsjam',  # Only allow OddsJam verification
-            UnifiedBet.verified == False     # Only unverified bets
-        ).all()
-        
-        if not bets:
-            return jsonify({
-                "error": "No unverified OddsJam bets found with provided IDs"
-            }), 404
-        
-        # Mark all as verified
-        verified_count = 0
-        for bet in bets:
-            bet.verified = True
-            verified_count += 1
-        
-        db.session.commit()
-        
-        return jsonify({
-            "message": f"Successfully verified {verified_count} bets",
-            "verified_count": verified_count,
-            "verified_bet_ids": [bet.id for bet in bets],
-            "verified_at": datetime.now().isoformat()
-        }), 200
-    
-    except Exception as e:
-        db.session.rollback()
-        print(f"Error verifying multiple bets: {str(e)}")
-        return jsonify({"error": str(e)}), 500
-
-@bp.route("/verification-stats")
-def get_verification_stats():
-    """Get verification statistics for dashboard"""
-    try:
-        # Overall verification stats
-        total_bets = UnifiedBet.query.count()
-        verified_bets = UnifiedBet.query.filter(UnifiedBet.verified == True).count()
-        unverified_bets = UnifiedBet.query.filter(UnifiedBet.verified == False).count()
-        
-        # Unverified settled bets (the ones that need attention)
-        unverified_settled = UnifiedBet.query.filter(
-            UnifiedBet.verified == False,
-            UnifiedBet.status.in_(['won', 'lost', 'refunded']),
-            UnifiedBet.source == 'oddsjam'  # Only OddsJam needs manual verification
-        ).count()
-        
-        # Source breakdown
-        source_stats = db.session.query(
-            UnifiedBet.source,
-            func.count(UnifiedBet.id).label('total'),
-            func.sum(func.cast(UnifiedBet.verified, db.Integer)).label('verified')
-        ).group_by(UnifiedBet.source).all()
-        
-        source_breakdown = {}
-        for source, total, verified in source_stats:
-            source_breakdown[source.value] = {
-                "total_bets": total,
-                "verified_bets": int(verified) if verified else 0,
-                "unverified_bets": total - (int(verified) if verified else 0),
-                "verification_rate": (int(verified) / total * 100) if total > 0 and verified else 0
-            }
-        
-        # Recent verification activity (last 7 days)
-        seven_days_ago = datetime.now() - timedelta(days=7)
-        recent_verifications = UnifiedBet.query.filter(
-            UnifiedBet.verified == True,
-            UnifiedBet.updated_at_db >= seven_days_ago
-        ).count()
-        
-        return jsonify({
-            "overall_stats": {
-                "total_bets": total_bets,
-                "verified_bets": verified_bets,
-                "unverified_bets": unverified_bets,
-                "verification_rate": (verified_bets / total_bets * 100) if total_bets > 0 else 0
-            },
-            "action_needed": {
-                "unverified_settled_bets": unverified_settled,
-                "description": "OddsJam bets that are settled but not manually verified"
-            },
-            "source_breakdown": source_breakdown,
-            "recent_activity": {
-                "verifications_last_7_days": recent_verifications
-            },
-            "system_info": {
-                "auto_verified_sources": ["pikkit"],
-                "manual_verification_sources": ["oddsjam"],
-                "reason": "Pikkit data comes directly from sportsbooks, OddsJam requires manual verification"
-            }
-        })
-    
-    except Exception as e:
-        print(f"Error getting verification stats: {str(e)}")
-        return jsonify({"error": str(e)}), 500
