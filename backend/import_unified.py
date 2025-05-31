@@ -1,3 +1,13 @@
+# backend/import_unified.py - IMPROVED VERSION
+#
+# KEY FEATURES:
+# 1. Uses immutable fields as unique identifiers:
+#    - OddsJam: time_placed + bet_info (these should never change)
+#    - Pikkit: original bet_id (Pikkit's unique identifier)
+# 2. Updates ALL fields when a match is found (except immutable identifiers)
+#    - This allows correction of initially incorrect data like wrong odds, stakes, sportsbooks
+# 3. Proper MySQL datetime comparison using TIMESTAMPDIFF()
+#
 import os
 import pandas as pd
 from flask import Flask
@@ -133,21 +143,22 @@ def import_oddsjam_to_unified(csv_path):
                 # Convert to unified format
                 unified_data = convert_oddsjam_to_unified(row_dict)
                 
-                # Build unique identifier for checking existing records
+                # IMPROVED: Use only time_placed and bet_info as unique identifiers
                 identifier_query = text("""
                     SELECT id FROM unified_bets 
                     WHERE source = 'oddsjam'
-                      AND sportsbook = :sportsbook
                       AND bet_info = :bet_info
-                      AND stake = :stake
-                      AND ABS(COALESCE(time_placed, '1900-01-01') - COALESCE(:time_placed, '1900-01-01')) < INTERVAL 1 MINUTE
+                      AND (
+                          (time_placed IS NULL AND :time_placed IS NULL)
+                          OR 
+                          (time_placed IS NOT NULL AND :time_placed IS NOT NULL 
+                           AND ABS(TIMESTAMPDIFF(MINUTE, time_placed, :time_placed)) <= 1)
+                      )
                     LIMIT 1
                 """)
                 
                 existing_result = db.session.execute(identifier_query, {
-                    'sportsbook': unified_data['sportsbook'],
                     'bet_info': unified_data['bet_info'],
-                    'stake': unified_data['stake'],
                     'time_placed': unified_data['time_placed']
                 })
                 
@@ -174,23 +185,39 @@ def import_oddsjam_to_unified(csv_path):
                         db.session.commit()
                 
                 else:
-                    # Update existing bet if status/profit changed
+                    # Update ALL fields except the immutable identifiers (time_placed, bet_info, source)
+                    # This allows correction of initially wrong data like odds, stakes, sportsbook names, etc.
                     update_query = text("""
                         UPDATE unified_bets 
-                        SET status = :status, bet_profit = :bet_profit, time_settled = :time_settled
+                        SET original_bet_id = :original_bet_id,
+                            sportsbook = :sportsbook,
+                            bet_type = :bet_type,
+                            status = :status,
+                            odds = :odds,
+                            clv = :clv,
+                            stake = :stake,
+                            bet_profit = :bet_profit,
+                            time_settled = :time_settled,
+                            tags = :tags,
+                            sport = :sport,
+                            league = :league,
+                            updated_at_db = CURRENT_TIMESTAMP
                         WHERE id = :bet_id
-                          AND (status != :status OR bet_profit != :bet_profit)
                     """)
                     
-                    result = db.session.execute(update_query, {
-                        'status': unified_data['status'],
-                        'bet_profit': unified_data['bet_profit'],
-                        'time_settled': unified_data['time_settled'],
-                        'bet_id': existing_bet[0]
-                    })
+                    # Create update parameters (excluding immutable fields)
+                    update_params = {key: value for key, value in unified_data.items() 
+                                   if key not in ['time_placed', 'bet_info', 'source']}
+                    update_params['bet_id'] = existing_bet[0]
+                    
+                    result = db.session.execute(update_query, update_params)
                     
                     if result.rowcount > 0:
                         updated_count += 1
+                        if updated_count <= 5:  # Show first 5 updates for debugging
+                            print(f"   🔄 Updated Pikkit bet: {unified_data['bet_info'][:50]}...")
+                        if updated_count <= 5:  # Show first 5 updates for debugging
+                            print(f"   🔄 Updated OddsJam bet: {unified_data['bet_info'][:50]}...")
                         
             except Exception as e:
                 error_count += 1
@@ -310,21 +337,33 @@ def import_pikkit_to_unified(csv_path):
                         db.session.commit()
                 
                 else:
-                    # Update existing bet if needed
+                    # Update ALL fields except the immutable identifier (original_bet_id, source)
+                    # This allows correction of any data that may have changed in Pikkit
                     update_query = text("""
                         UPDATE unified_bets 
-                        SET status = :status, bet_profit = :bet_profit, time_settled = :time_settled, clv = :clv
+                        SET sportsbook = :sportsbook,
+                            bet_type = :bet_type,
+                            status = :status,
+                            odds = :odds,
+                            clv = :clv,
+                            stake = :stake,
+                            bet_profit = :bet_profit,
+                            time_placed = :time_placed,
+                            time_settled = :time_settled,
+                            bet_info = :bet_info,
+                            tags = :tags,
+                            sport = :sport,
+                            league = :league,
+                            updated_at_db = CURRENT_TIMESTAMP
                         WHERE id = :bet_id
-                          AND (status != :status OR bet_profit != :bet_profit OR time_settled != :time_settled)
                     """)
                     
-                    result = db.session.execute(update_query, {
-                        'status': unified_data['status'],
-                        'bet_profit': unified_data['bet_profit'],
-                        'time_settled': unified_data['time_settled'],
-                        'clv': unified_data['clv'],
-                        'bet_id': existing_bet[0]
-                    })
+                    # Create update parameters (excluding immutable fields)
+                    update_params = {key: value for key, value in unified_data.items() 
+                                   if key not in ['original_bet_id', 'source']}
+                    update_params['bet_id'] = existing_bet[0]
+                    
+                    result = db.session.execute(update_query, update_params)
                     
                     if result.rowcount > 0:
                         updated_count += 1
