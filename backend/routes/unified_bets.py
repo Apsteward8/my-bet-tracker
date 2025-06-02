@@ -576,3 +576,293 @@ def test_unified_routes():
             "POST /api/unified/sync"
         ]
     })
+
+# Add these routes to backend/routes/unified_bets.py
+
+@bp.route("/calendar-month", methods=["GET"])
+def get_unified_calendar_month():
+    """
+    Get calendar data for a specific month from unified table.
+    
+    IMPORTANT: Uses time_settled for ALL bets (both settled and pending) because:
+    - For OddsJam: time_settled = event_start_date (when the game happens)
+    - For Pikkit: time_settled = actual settlement date (close to event date)
+    - This ensures bets appear on their event date, not placement date
+    
+    Example: A bet placed today for next week's game will appear on next week, not today.
+    """
+    try:
+        if not check_unified_table_exists():
+            return jsonify({"error": "Unified table not found"}), 404
+        
+        # Parse query parameters
+        year = request.args.get('year', datetime.now().year, type=int)
+        month = request.args.get('month', datetime.now().month, type=int)
+        
+        print(f"[DEBUG] Getting unified calendar data for {year}-{month}")
+        
+        # Get first and last day of the month
+        first_day = datetime(year, month, 1).date()
+        if month == 12:
+            last_day = datetime(year + 1, 1, 1).date() - timedelta(days=1)
+        else:
+            last_day = datetime(year, month + 1, 1).date() - timedelta(days=1)
+        
+        # For calendar display, we should use time_settled for ALL bets because:
+        # - For OddsJam: time_settled = event_start_date (when game happens)
+        # - For Pikkit: time_settled = actual settlement date (close to event date)
+        # - For pending bets: time_settled shows when the event will happen
+        
+        # Get ALL bets (settled + pending) grouped by event/settlement date
+        all_bets_query = text("""
+            SELECT 
+                DATE(time_settled) as bet_date,
+                COUNT(*) as total_count,
+                SUM(stake) as total_stake,
+                SUM(CASE WHEN status IN ('won', 'lost', 'refunded') THEN 1 ELSE 0 END) as settled_count,
+                SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending_count,
+                SUM(CASE WHEN status = 'won' THEN 1 ELSE 0 END) as won_count,
+                SUM(CASE WHEN status = 'lost' THEN 1 ELSE 0 END) as lost_count,
+                SUM(CASE WHEN status = 'refunded' THEN 1 ELSE 0 END) as push_count,
+                SUM(CASE WHEN status IN ('won', 'lost', 'refunded') THEN bet_profit ELSE 0 END) as total_profit
+            FROM unified_bets 
+            WHERE time_settled IS NOT NULL
+              AND DATE(time_settled) >= :first_day
+              AND DATE(time_settled) <= :last_day
+            GROUP BY DATE(time_settled)
+        """)
+        
+        result = db.session.execute(all_bets_query, {
+            'first_day': first_day,
+            'last_day': last_day
+        })
+        
+        # Process the combined data
+        calendar_data = {}
+        for row in result.fetchall():
+            date_str = row[0].isoformat()
+            calendar_data[date_str] = {
+                'date': date_str,
+                'bet_count': row[1],          # total_count
+                'total_stake': float(row[2]) if row[2] else 0,  # total_stake
+                'settled_count': row[3],      # settled_count
+                'pending_count': row[4],      # pending_count
+                'won_count': row[5],          # won_count
+                'lost_count': row[6],         # lost_count
+                'push_count': row[7],         # push_count
+                'profit': float(row[8]) if row[8] else 0,  # total_profit
+            }
+        
+        # Fallback: Check for any bets that only have time_placed (edge case)
+        fallback_query = text("""
+            SELECT 
+                DATE(time_placed) as bet_date,
+                COUNT(*) as total_count,
+                SUM(stake) as total_stake
+            FROM unified_bets 
+            WHERE time_settled IS NULL
+              AND time_placed IS NOT NULL
+              AND DATE(time_placed) >= :first_day
+              AND DATE(time_placed) <= :last_day
+            GROUP BY DATE(time_placed)
+        """)
+        
+        fallback_result = db.session.execute(fallback_query, {
+            'first_day': first_day,
+            'last_day': last_day
+        })
+        
+        # Add fallback data (these will show as pending with no profit)
+        for row in fallback_result.fetchall():
+            date_str = row[0].isoformat()
+            if date_str not in calendar_data:
+                calendar_data[date_str] = {
+                    'date': date_str,
+                    'bet_count': row[1],
+                    'total_stake': float(row[2]) if row[2] else 0,
+                    'settled_count': 0,
+                    'pending_count': row[1],  # Assume all are pending if no time_settled
+                    'won_count': 0,
+                    'lost_count': 0,
+                    'push_count': 0,
+                    'profit': 0,
+                }
+        
+        # Convert to list and sort
+        calendar_list = list(calendar_data.values())
+        calendar_list.sort(key=lambda x: x['date'])
+        
+        # Calculate month summary
+        month_summary = {
+            'total_profit': sum(day['profit'] for day in calendar_list),
+            'total_bets': sum(day['bet_count'] for day in calendar_list),
+            'settled_bets': sum(day['settled_count'] for day in calendar_list),
+            'pending_bets': sum(day['pending_count'] for day in calendar_list),
+            'days_with_bets': len(calendar_list),
+            'total_stake': sum(day['total_stake'] for day in calendar_list),
+            'won_bets': sum(day['won_count'] for day in calendar_list),
+            'lost_bets': sum(day['lost_count'] for day in calendar_list)
+        }
+        
+        # Calculate ROI
+        if month_summary['total_stake'] > 0:
+            month_summary['roi'] = (month_summary['total_profit'] / month_summary['total_stake']) * 100
+        else:
+            month_summary['roi'] = 0
+        
+        # Calculate win rate
+        total_decisive = month_summary['won_bets'] + month_summary['lost_bets']
+        if total_decisive > 0:
+            month_summary['win_rate'] = (month_summary['won_bets'] / total_decisive) * 100
+        else:
+            month_summary['win_rate'] = 0
+        
+        print(f"[DEBUG] Generated calendar data for {len(calendar_list)} days")
+        
+        return jsonify({
+            'calendar_data': calendar_list,
+            'month_info': {
+                'year': year,
+                'month': month,
+                'first_day': first_day.isoformat(),
+                'last_day': last_day.isoformat()
+            },
+            'summary': month_summary
+        })
+    
+    except Exception as e:
+        print(f"Error getting unified calendar month data: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@bp.route("/calendar-day", methods=["GET"])
+def get_unified_calendar_day():
+    """
+    Get detailed bet data for a specific day from unified table.
+    
+    IMPORTANT: Uses time_settled to determine which day bets appear on.
+    This means bets show up on their event date, not when they were placed.
+    """
+    try:
+        if not check_unified_table_exists():
+            return jsonify({"error": "Unified table not found"}), 404
+        
+        # Parse query parameters
+        date_str = request.args.get('date')
+        
+        if not date_str:
+            return jsonify({"error": "Date parameter is required"}), 400
+        
+        try:
+            target_date = datetime.fromisoformat(date_str).date()
+        except ValueError:
+            return jsonify({"error": "Invalid date format. Use YYYY-MM-DD"}), 400
+        
+        print(f"[DEBUG] Getting unified day data for {target_date}")
+        
+        # Get all bets for this date using time_settled
+        # This ensures bets show up on their event date, not placement date
+        # In unified table: time_settled = event date for both settled and pending bets
+        bets_query = text("""
+            SELECT 
+                id, source, original_bet_id, sportsbook, bet_type, status, 
+                odds, clv, stake, bet_profit, time_placed, time_settled, 
+                bet_info, sport, league, tags
+            FROM unified_bets 
+            WHERE time_settled IS NOT NULL
+              AND DATE(time_settled) = :target_date
+            ORDER BY 
+                CASE WHEN status = 'pending' THEN 0 ELSE 1 END,  -- Pending bets first
+                time_placed DESC  -- Then by placement time
+        """)
+        
+        result = db.session.execute(bets_query, {'target_date': target_date})
+        bet_rows = result.fetchall()
+        
+        # Fallback: also check for bets that only have time_placed (edge case)
+        if len(bet_rows) == 0:
+            fallback_query = text("""
+                SELECT 
+                    id, source, original_bet_id, sportsbook, bet_type, status, 
+                    odds, clv, stake, bet_profit, time_placed, time_settled, 
+                    bet_info, sport, league, tags
+                FROM unified_bets 
+                WHERE time_settled IS NULL
+                  AND DATE(time_placed) = :target_date
+                ORDER BY time_placed DESC
+            """)
+            
+            fallback_result = db.session.execute(fallback_query, {'target_date': target_date})
+            bet_rows = fallback_result.fetchall()
+        
+        # Format bets
+        bets = []
+        for row in bet_rows:
+            bets.append({
+                'id': row[0],
+                'source': row[1],
+                'original_bet_id': row[2],
+                'sportsbook': row[3],
+                'bet_type': row[4],
+                'status': row[5],
+                'odds': row[6],
+                'clv': row[7],
+                'stake': float(row[8]) if row[8] else 0,
+                'bet_profit': float(row[9]) if row[9] else 0,
+                'time_placed': row[10].isoformat() if row[10] else None,
+                'time_settled': row[11].isoformat() if row[11] else None,
+                'bet_info': row[12],
+                'sport': row[13],
+                'league': row[14],
+                'tags': row[15],
+                'event_name': '',  # Will be extracted from bet_info if needed
+                'bet_name': ''     # Will be extracted from bet_info if needed
+            })
+        
+        # Calculate day statistics
+        total_bets = len(bets)
+        settled_bets = len([bet for bet in bets if bet['status'] in ['won', 'lost', 'refunded']])
+        pending_bets = len([bet for bet in bets if bet['status'] == 'pending'])
+        won_bets = len([bet for bet in bets if bet['status'] == 'won'])
+        lost_bets = len([bet for bet in bets if bet['status'] == 'lost'])
+        push_bets = len([bet for bet in bets if bet['status'] == 'refunded'])
+        
+        total_stake = sum(bet['stake'] for bet in bets)
+        # Only count profit from settled bets
+        total_profit = sum(bet['bet_profit'] for bet in bets if bet['status'] in ['won', 'lost', 'refunded'])
+        
+        # Calculate metrics
+        roi = (total_profit / total_stake * 100) if total_stake > 0 else 0
+        win_rate = (won_bets / (won_bets + lost_bets) * 100) if (won_bets + lost_bets) > 0 else 0
+        
+        # Find biggest win/loss
+        settled_profits = [bet['bet_profit'] for bet in bets if bet['status'] in ['won', 'lost']]
+        biggest_win = max(settled_profits) if settled_profits else 0
+        biggest_loss = min(settled_profits) if settled_profits else 0
+        
+        print(f"[DEBUG] Found {len(bets)} bets for {target_date}")
+        
+        return jsonify({
+            'date': date_str,
+            'bets': bets,
+            'total_bets': total_bets,
+            'settled_bets': settled_bets,
+            'pending_bets': pending_bets,
+            'won_bets': won_bets,
+            'lost_bets': lost_bets,
+            'push_bets': push_bets,
+            'total_stake': total_stake,
+            'total_profit': total_profit,
+            'roi': roi,
+            'win_rate': win_rate,
+            'biggest_win': biggest_win,
+            'biggest_loss': biggest_loss
+        })
+    
+    except Exception as e:
+        print(f"Error getting unified calendar day data: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
